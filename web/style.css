@@ -1,0 +1,43 @@
+:root {
+  --bg: #0f1115;
+  --panel: #181b22;
+  --panel-2: #20242d;
+  --line: #2c313c;
+  --text: #e8eaef;
+  --muted: #9aa3b2;
+  --ok: #3ecf8e;
+  --warn: #f5b942;
+  --bad: #ff5d5d;
+  --info: #5ab0ff;
+  --fall: #ff7a59;
+  --normal: #5ab0ff;
+  --radius: 14px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text);
+  font-family: "Sarabun", "Leelawadee UI", "Thonburi", "Noto Sans Thai", system-ui, sans-serif; }
+button { font: inherit; cursor: pointer; border: 0; border-radius: 12px; color: #0b0d10; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+input, select { font: inherit; color: var(--text); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+.muted { color: var(--muted); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--line); font-size: 14px; white-space: nowrap; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); display: inline-block; }
+.s-ok { color: var(--ok); } .s-warn { color: var(--warn); } .s-bad, .s-none { color: var(--bad); }
+.bg-ok { background: var(--ok); } .bg-warn { background: var(--warn); } .bg-bad, .bg-none { background: var(--bad); }
+.tag { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; }
+.tag.fall { color: var(--fall); } .tag.normal { color: var(--normal); }
+.btn-ok { background: var(--ok); } .btn-warn { background: var(--warn); } .btn-bad { background: var(--bad); color: #fff; }
+.btn-ghost { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
+.flash { position: fixed; inset: 0; background: var(--bad); color: #fff; display: none; z-index: 50;
+  align-items: center; justify-content: center; flex-direction: column; text-align: center;
+  font-weight: 800; animation: pulse .35s ease-in-out infinite alternate; }
+.flash.on { display: flex; }
+@keyframes pulse { from { filter: brightness(1); } to { filter: brightness(1.25); } }
+.overlay { position: fixed; inset: 0; background: rgba(8,9,12,.88); z-index: 60; display: flex;
+  align-items: center; justify-content: center; text-align: center; padding: 16px; }
+.overlay[hidden] { display: none; }
+.err { color: var(--bad); min-height: 1.3em; }

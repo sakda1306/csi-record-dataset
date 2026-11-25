@@ -1,0 +1,152 @@
+# ค่าตั้งของระบบบันทึก dataset — แก้ไฟล์นี้แล้วรัน record.py ใหม่
+# รูปแบบ TOML: ข้อความต้องอยู่ใน "..." , true/false ตัวเล็ก , # คือคอมเมนต์
+
+# ---------------------------------------------------------------- บอร์ด Rx
+[serial]
+# พอร์ตของบอร์ด Rx
+#   "auto"                     = หาเองจากบอร์ดที่ส่งข้อมูล CSI อยู่ (แนะนำ)
+#   Windows ตัวอย่าง           = "COM10"
+#   macOS ตัวอย่าง             = "/dev/cu.usbserial-0001" หรือ "/dev/cu.usbmodem1101"
+#   ดูรายชื่อพอร์ต: python record.py --list-ports
+rx_port = "auto"
+baud = 921600
+rate_hz = 100            # อัตราที่ Tx ส่ง ping (ต้องตรงกับ firmware)
+
+# ---------------------------------------------------------------- เว็บ (จอคอม + รีโมตมือถือ)
+[server]
+host = "0.0.0.0"         # "0.0.0.0" = มือถือในวง Wi-Fi เดียวกันเข้าได้, "127.0.0.1" = เฉพาะเครื่องนี้
+port = 8765
+pin = "1234"             # รหัสที่มือถือต้องใส่ก่อนสั่งงาน ("" = ไม่ต้องใส่)
+open_browser = true      # เปิดหน้าจอแสดงผลบนคอมให้อัตโนมัติ
+
+# ---------------------------------------------------------------- ที่เก็บไฟล์
+[storage]
+# โฟลเดอร์เก็บ dataset (ถ้ายังไม่มี โปรแกรมสร้างให้เอง)
+#   "data"                          = โฟลเดอร์ data ข้างไฟล์ config นี้
+#   "D:/Dataset/CSI"                = Windows: ใช้ / แทน \ ได้
+#   'D:\Dataset\CSI'                = Windows: ถ้าจะใช้ \ ต้องใช้เครื่องหมาย ' (ไม่ใช่ ")
+#   "~/Documents/CSI-dataset"       = macOS: ~ คือโฟลเดอร์ของผู้ใช้
+#   "G:/My Drive/Final-Project/dataset" = โฟลเดอร์ Google Drive ที่ sync ไว้ (สำรองให้อัตโนมัติ)
+data_dir = "G:/My Drive/Final-Project/dataset"
+session = "auto"         # ชื่อรอบเก็บข้อมูล, "auto" = วันที่วันนี้ เช่น 2026-11-25
+location = "lab-bathroom"  # สถานที่/ห้อง บันทึกลงทุกไฟล์
+write_csv = true         # เขียน CSV amplitude แบบเดียวกับไฟล์ exp7/exp8 เดิมด้วย
+keep_discarded = true    # true = ย้ายเทคที่ทิ้งไปไว้ที่ _discarded/ (ไม่ลบจริง)
+
+# ---------------------------------------------------------------- จังหวะเวลา (ค่าเริ่มต้นของทุกท่า แต่ละท่าแก้ทับได้)
+[timing]
+countdown_s = 5          # นับถอยหลังก่อนเริ่มบันทึก (ให้เวลาเดินเข้าที่)
+duration_s = 10          # ความยาวการบันทึกต่อเทค
+cue_s = 4                # วินาทีที่ส่งสัญญาณให้ทำท่า นับจากเริ่มบันทึก (ต้อง >= 3 เพื่อให้มีช่วงนิ่งก่อนท่า 3 วินาที)
+rest_s = 5               # พักระหว่างเทค เมื่อสั่งบันทึกหลายเทคต่อกัน
+
+# ---------------------------------------------------------------- เกณฑ์คุณภาพต่อเทค
+[quality]
+min_rate_hz = 95         # อัตราต่ำกว่านี้ = ไม่ผ่าน
+max_air_loss_pct = 5     # เฟรมหายในอากาศเกินนี้ = ไม่ผ่าน
+max_gap_ms = 200         # มีช่องว่างระหว่างเฟรมนานกว่านี้แม้ครั้งเดียว = ไม่ผ่าน
+min_motion_ratio = 2.0   # ท่าที่ต้องขยับ: การเคลื่อนไหวหลังสัญญาณต้องมากกว่าก่อนสัญญาณกี่เท่า (ต่ำกว่า = เตือน)
+auto_keep_pass = true    # true = เทคที่ผ่านเก็บเลย, เทคไม่ผ่านรอให้กด เก็บ/บันทึกใหม่
+                         # false = ทุกเทครอให้กดเอง
+
+# ---------------------------------------------------------------- สัญญาณบอกจังหวะ
+[cue]
+sound = true             # เสียงบี๊บ (นับถอยหลัง, เริ่ม, ทำท่า, จบ)
+speech = true            # พูดชื่อท่าตอนเริ่มนับถอยหลัง (ถ้าเบราว์เซอร์มีเสียงภาษาไทย)
+vibrate = true           # มือถือสั่นตอนให้ทำท่า (Android)
+flash_s = 1.5            # จอกะพริบแดงนานกี่วินาทีตอนให้ทำท่า
+
+# ---------------------------------------------------------------- หน้าจอ
+[display]
+window_s = 10            # กราฟย้อนหลังกี่วินาที
+
+# ---------------------------------------------------------------- อาสาสมัคร และตำแหน่งในห้อง
+[people]
+volunteers = ["v01", "v02", "v03", "v04", "v05"]   # เพิ่มชื่อใหม่จากมือถือได้ด้วย
+positions = ["p1", "p2", "p3"]                     # จุดที่ผู้ทดลองยืน/ล้มในห้อง
+
+# ---------------------------------------------------------------- ท่าที่จะเก็บ
+# id       ใช้ตั้งชื่อไฟล์ (a-z 0-9 _)
+# name     ชื่อที่แสดงบนจอ / พูด
+# label    คลาสสำหรับโมเดล: "fall" หรือ "normal"
+# target   จำนวนเทคเป้าหมายต่ออาสาสมัคร
+# cue_text ข้อความใหญ่บนจอตอนให้ทำท่า
+# expect_motion  ท่านี้ต้องมีการเคลื่อนไหวหลังสัญญาณไหม (ใช้เช็กว่าทำท่าทันจังหวะ)
+# no_volunteer   true = ห้องว่าง ไม่มีคน
+# แก้ทับ countdown_s / duration_s / cue_s / rest_s ได้รายท่า ; cue_s = 0 คือไม่มีสัญญาณทำท่า
+
+[[activities]]
+id = "fall_forward"
+name = "ล้มไปข้างหน้า"
+label = "fall"
+target = 20
+cue_text = "ล้ม!"
+expect_motion = true
+
+[[activities]]
+id = "fall_backward"
+name = "ล้มไปข้างหลัง"
+label = "fall"
+target = 20
+cue_text = "ล้ม!"
+expect_motion = true
+
+[[activities]]
+id = "fall_side"
+name = "ล้มด้านข้าง"
+label = "fall"
+target = 20
+cue_text = "ล้ม!"
+expect_motion = true
+
+[[activities]]
+id = "sit_down"
+name = "นั่งลง (ชักโครก)"
+label = "normal"
+target = 20
+cue_text = "นั่ง!"
+expect_motion = true
+
+[[activities]]
+id = "stand_up"
+name = "ลุกขึ้นยืน"
+label = "normal"
+target = 20
+cue_text = "ลุก!"
+expect_motion = true
+
+[[activities]]
+id = "bend_pick"
+name = "ก้มเก็บของ"
+label = "normal"
+target = 20
+cue_text = "ก้ม!"
+expect_motion = true
+
+[[activities]]
+id = "walk"
+name = "เดินในห้อง"
+label = "normal"
+target = 10
+cue_text = "เดิน!"
+cue_s = 2
+expect_motion = true
+
+[[activities]]
+id = "stand_still"
+name = "ยืนนิ่ง"
+label = "normal"
+target = 5
+cue_s = 0
+expect_motion = false
+
+[[activities]]
+id = "empty_room"
+name = "ห้องว่าง (baseline)"
+label = "normal"
+target = 3
+duration_s = 60
+countdown_s = 10
+cue_s = 0
+expect_motion = false
+no_volunteer = true

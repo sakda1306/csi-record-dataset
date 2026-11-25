@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CSI Recorder</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; gap: 12px; padding: 12px 16px; }
+  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  header h1 { font-size: 20px; margin: 0; }
+  header .grow { flex: 1; }
+  .phone { font-family: Consolas, Menlo, monospace; font-size: 15px; }
+  main { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 12px; min-height: 0; }
+  .stage { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+    min-height: 300px; position: relative; overflow: hidden; }
+  .stage .phase { font-size: 20px; letter-spacing: .04em; color: var(--muted); }
+  .stage .title { font-size: clamp(32px, 4.2vw, 60px); font-weight: 800; margin: 6px 0; }
+  .stage .big { font-size: clamp(80px, 12vw, 170px); font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  .stage .sub { font-size: clamp(18px, 1.8vw, 26px); color: var(--muted); margin-top: 8px; }
+  .stage.ph-recording { box-shadow: inset 0 0 0 4px var(--bad); }
+  .stage.ph-countdown { box-shadow: inset 0 0 0 4px var(--warn); }
+  .rec-dot { position: absolute; top: 14px; right: 18px; color: var(--bad); font-weight: 700; display: none; }
+  .ph-recording .rec-dot { display: block; animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .timeline { width: 92%; height: 14px; background: var(--panel-2); border-radius: 7px; position: relative; margin-top: 18px; overflow: hidden; }
+  .timeline .fill { position: absolute; inset: 0 auto 0 0; background: var(--info); width: 0; }
+  .timeline .cue { position: absolute; top: -2px; bottom: -2px; width: 4px; background: var(--bad); }
+  .side { display: grid; gap: 12px; align-content: start; }
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .tile { background: var(--panel-2); border-radius: 10px; padding: 8px 10px; }
+  .tile .k { font-size: 12px; color: var(--muted); }
+  .tile .v { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .result .verdict { font-size: 26px; font-weight: 800; }
+  .result ul { margin: 6px 0 0; padding-left: 18px; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 14px; }
+  .log { font-family: Consolas, Menlo, monospace; font-size: 12px; color: var(--muted); white-space: pre-wrap; max-height: 150px; overflow: auto; }
+  .charts { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 12px; }
+  canvas { width: 100%; display: block; border-radius: 8px; background: #000; }
+  #wf { height: 190px; } #mo { height: 90px; margin-top: 8px; }
+  .chart-head { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 3px 4px; border-bottom: 1px solid var(--line); }
+  .bar { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; min-width: 60px; }
+  .bar > i { display: block; height: 100%; background: var(--info); }
+  .bar.done > i { background: var(--ok); }
+  .banner { padding: 8px 12px; border-radius: 10px; background: var(--bad); color: #fff; font-weight: 700; display: none; }
+  .banner.on { display: block; }
+  .keys { font-size: 13px; color: var(--muted); }
+  kbd { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+  .flash .t { font-size: 22vw; line-height: 1; } .flash .s { font-size: 4vw; }
+  @media (max-width: 900px) { main, .charts { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>CSI Dataset Recorder</h1>
+  <span class="chip" id="session">–</span>
+  <span class="chip" id="datadir" title="โฟลเดอร์ที่เก็บ dataset">–</span>
+  <span class="chip" id="link"><span class="dot"></span><span>–</span></span>
+  <span class="chip" id="conn">กำลังเชื่อมต่อ…</span>
+  <span class="grow"></span>
+  <span class="muted">มือถือเปิด</span> <span class="phone" id="phone">–</span>
+</header>
+
+<main>
+  <section class="panel stage" id="stage">
+    <div class="rec-dot">● REC</div>
+    <div class="phase" id="phase">–</div>
+    <div class="title" id="title">–</div>
+    <div class="big" id="big"></div>
+    <div class="sub" id="sub"></div>
+    <div class="timeline" id="tl" hidden><div class="fill"></div><div class="cue"></div></div>
+    <div class="banner" id="banner" style="margin-top:14px"></div>
+  </section>
+
+  <aside class="side">
+    <div class="panel">
+      <div class="tiles">
+        <div class="tile"><div class="k">อัตรา (1 s)</div><div class="v" id="t-rate">–</div></div>
+        <div class="tile"><div class="k">RSSI</div><div class="v" id="t-rssi">–</div></div>
+        <div class="tile"><div class="k">เฟรมหาย (5 s)</div><div class="v" id="t-loss">–</div></div>
+        <div class="tile"><div class="k">ช่วงขาดนานสุด</div><div class="v" id="t-gap">–</div></div>
+        <div class="tile"><div class="k">การเคลื่อนไหว</div><div class="v" id="t-motion">–</div></div>
+        <div class="tile"><div class="k">serial หาย / ck</div><div class="v" id="t-uart">–</div></div>
+      </div>
+      <div class="kv muted" style="margin-top:8px" id="device"></div>
+    </div>
+    <div class="panel result" id="result"><span class="muted">ยังไม่มีเทค</span></div>
+    <div class="panel"><div class="log" id="log"></div></div>
+  </aside>
+</main>
+
+<section class="charts">
+  <div class="panel">
+    <div class="chart-head"><span>CSI amplitude — 52 subcarriers (บน −26 → ล่าง +26)</span><span id="wf-scale"></span></div>
+    <canvas id="wf"></canvas>
+    <div class="chart-head" style="margin-top:8px"><span>การเคลื่อนไหว (std 0.5 s)</span><span class="muted">▮ เขียว = ช่วงบันทึก, เส้นแดง = สัญญาณทำท่า</span></div>
+    <canvas id="mo"></canvas>
+  </div>
+  <div class="panel">
+    <div class="chart-head"><span>ความคืบหน้า: <b id="pv">–</b></span><span class="keys">
+      <kbd>K</kbd> เก็บ <kbd>R</kbd> บันทึกใหม่ <kbd>D</kbd> ทิ้ง <kbd>Esc</kbd> หยุด</span></div>
+    <table id="progress"></table>
+  </div>
+</section>
+
+<div class="flash" id="flash"><div class="t" id="flash-t"></div><div class="s" id="flash-s"></div></div>
+<div class="overlay" id="unlock" hidden>
+  <div><div style="font-size:34px;font-weight:800">คลิกที่ใดก็ได้เพื่อเปิดเสียง</div>
+  <div class="muted" style="margin-top:8px">เบราว์เซอร์ต้องให้คลิกหนึ่งครั้งก่อนเล่นเสียงสัญญาณ</div></div>
+</div>
+
+<script src="/common.js"></script>
+<script>
+"use strict";
+const rows = [];        // {t, a: Uint8Array(52)}
+const motion = [];      // [t, value]
+const marks = new Map(); // seq -> {t_start, t_end, cue_at}
+let flashUntil = 0;
+
+const PALETTE = (() => {  // plasma-like, 256 entries
+  const stops = [[13, 8, 135], [126, 3, 168], [204, 71, 120], [248, 149, 64], [240, 249, 33]];
+  const out = new Uint8Array(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const x = i / 255 * (stops.length - 1), k = Math.min(stops.length - 2, Math.floor(x)), f = x - k;
+    for (let c = 0; c < 3; c++) out[i * 3 + c] = stops[k][c] + (stops[k + 1][c] - stops[k][c]) * f;
+  }
+  return out;
+})();
+
+function onRows(newRows) {
+  for (const r of newRows) rows.push({ t: r[0], a: Uint8Array.from(r.slice(1)) });
+  const keepFrom = serverNow() - App.cfg.window_s - 2;
+  while (rows.length && rows[0].t < keepFrom) rows.shift();
+}
+
+function onStatus(st) {
+  const L = st.link;
+  if (L.motion !== null) motion.push([st.server_time, L.motion]);
+  const keepFrom = st.server_time - App.cfg.window_s - 2;
+  while (motion.length && motion[0][0] < keepFrom) motion.shift();
+  if (st.take) marks.set(st.take.seq, { t_start: st.take.t_start, t_end: st.take.t_end, cue_at: st.take.cue_at });
+  for (const [k, m] of marks) if (m.t_end < keepFrom) marks.delete(k);
+  runTimeline(st, onTimeline);
+  render(st);
+}
+
+function onTimeline(name, tk) {
+  if (name === "new") speak(tk.name);
+  if (name === "cue") {
+    flashUntil = performance.now() + App.cfg.cue.flash_s * 1000;
+    $("#flash-t").textContent = tk.cue_text;
+    $("#flash-s").textContent = tk.name;
+    $("#flash").classList.add("on");
+    setTimeout(() => { if (performance.now() >= flashUntil - 5) $("#flash").classList.remove("on"); }, App.cfg.cue.flash_s * 1000);
+  }
+}
+
+function render(st) {
+  const L = st.link, q = App.cfg.quality, now = serverNow();
+  // header
+  const lk = $("#link");
+  lk.querySelector(".dot").className = "dot bg-" + L.status;
+  lk.querySelector("span:last-child").textContent =
+    !L.port_ok ? `Rx ${L.port}: ไม่ได้เชื่อมต่อ` :
+    L.status === "none" ? `Rx ${L.port}: ไม่มีสัญญาณจาก Tx` : `Rx ${L.port}: ${L.rate_hz} Hz`;
+  $("#conn").textContent = "เชื่อมต่อแล้ว";
+  // tiles
+  setTile("#t-rate", L.rate_hz, 0, " Hz", L.rate_hz >= q.min_rate_hz ? "ok" : L.rate_hz >= .8 * q.min_rate_hz ? "warn" : "bad");
+  setTile("#t-rssi", L.rssi, 0, "", L.rssi === null ? "" : L.rssi >= -65 ? "ok" : L.rssi >= -75 ? "warn" : "bad");
+  setTile("#t-loss", L.air_loss_pct, 1, " %", L.air_loss_pct === null ? "" : L.air_loss_pct <= q.max_air_loss_pct ? "ok" : "bad");
+  setTile("#t-gap", L.gap_max_ms, 0, " ms", L.gap_max_ms === null ? "" : L.gap_max_ms <= q.max_gap_ms ? "ok" : "bad");
+  setTile("#t-motion", L.motion, 2, "", "");
+  $("#t-uart").textContent = `${L.uart_lost} / ${L.checksum_errors}`;
+  const d = st.device;
+  $("#device").innerHTML = d.rx_mac ? `<span>Rx</span><span>${esc(d.rx_mac)}</span><span>Tx</span><span>${esc(d.tx_ssid)} · ch ${esc(d.ch)}</span>` : "";
+
+  // stage
+  const stage = $("#stage");
+  stage.className = "panel stage ph-" + st.phase;
+  const tk = st.take;
+  let phase = PHASE_TH[st.phase] || st.phase, title = "", big = "", sub = "";
+  const tl = $("#tl");
+  tl.hidden = !(tk && (st.phase === "countdown" || st.phase === "recording"));
+  if (st.phase === "idle") {
+    title = "พร้อมบันทึก";
+    sub = "เลือกท่าบนมือถือแล้วกดเริ่ม";
+  } else if (st.phase === "countdown") {
+    title = tk.name; big = Math.max(0, Math.ceil(tk.t_start - now));
+    sub = `เทค ${tk.rep}/${tk.reps} · ${tk.volunteer} · ${tk.position} — เข้าที่ อยู่นิ่ง`;
+  } else if (st.phase === "recording") {
+    title = tk.name;
+    if (tk.cue_at && now < tk.cue_at) { big = Math.ceil(tk.cue_at - now); sub = `อยู่นิ่ง… ${tk.cue_text.replace("!", "")}ในอีก ${big} วินาที`; }
+    else if (tk.cue_at && now < tk.cue_at + 1.5) { big = tk.cue_text; sub = "ทำท่าเลย"; }
+    else { big = Math.max(0, Math.ceil(tk.t_end - now)); sub = tk.cue_at ? "อยู่ในท่าสุดท้าย นิ่งไว้จนจบ" : "อยู่นิ่ง… จนจบ"; }
+    const frac = Math.min(1, Math.max(0, (now - tk.t_start) / (tk.t_end - tk.t_start)));
+    tl.querySelector(".fill").style.width = (frac * 100) + "%";
+  } else if (st.phase === "review") {
+    const r = st.last_result;
+    title = r.verdict === "pass" ? "ผ่าน" : "ไม่ผ่าน";
+    big = ""; sub = "เลือกบนมือถือ: เก็บ / บันทึกใหม่ / ทิ้ง  (หรือกด K / R / D)";
+  } else if (st.phase === "rest") {
+    const b = st.batch;
+    title = "พัก"; big = Math.max(0, Math.ceil(st.phase_end - now));
+    sub = `ถัดไป: ${activityById(b.activity).name} เทค ${b.done + 1}/${b.reps}`;
+  }
+  if (tk && !tl.hidden) {
+    const cueEl = tl.querySelector(".cue");
+    cueEl.hidden = !tk.cue_at;
+    if (tk.cue_at) cueEl.style.left = ((tk.cue_at - tk.t_start) / (tk.t_end - tk.t_start) * 100) + "%";
+    if (st.phase === "countdown") tl.querySelector(".fill").style.width = "0%";
+  }
+  $("#phase").textContent = phase;
+  $("#title").textContent = title;
+  $("#big").textContent = big;
+  $("#big").style.color = st.phase === "recording" && tk.cue_at && now >= tk.cue_at && now < tk.cue_at + 1.5 ? "var(--bad)" : "";
+  $("#sub").textContent = sub;
+  const ban = $("#banner");
+  const warn = !L.port_ok ? `เชื่อมต่อ Rx (${L.port}) ไม่ได้: ${L.port_error}` :
+    L.status === "none" ? "ไม่มีสัญญาณจาก Tx — เช็กไฟ Tx" :
+    L.status === "bad" ? `สัญญาณแย่ (${L.rate_hz} Hz) — ข้อมูลที่บันทึกตอนนี้จะไม่ผ่าน` : "";
+  ban.textContent = warn; ban.classList.toggle("on", !!warn);
+
+  renderResult(st.last_result);
+  $("#log").textContent = st.log.join("\n");
+  renderProgress(st);
+}
+
+function setTile(sel, v, d, unit, cls) {
+  const el = $(sel);
+  el.textContent = fmt(v, d, unit);
+  el.className = "v" + (cls ? " s-" + cls : "");
+}
+
+function renderResult(r) {
+  const el = $("#result");
+  if (!r) return;
+  const st = { pending: "รอตัดสิน", kept: "เก็บแล้ว", discarded: "ทิ้งแล้ว" }[r.status] || r.status;
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <span class="verdict ${r.verdict === "pass" ? "s-ok" : "s-bad"}">${r.verdict === "pass" ? "ผ่าน" : "ไม่ผ่าน"}</span>
+      <span class="chip">${esc(st)}</span></div>
+    <div class="muted">${esc(r.take_id)} · เทค ${r.rep}/${r.reps}</div>
+    <div class="kv" style="margin-top:6px">
+      <span>อัตรา</span><span>${fmt(r.rate_hz, 1, " Hz")} (${r.frames} เฟรม)</span>
+      <span>เฟรมหาย</span><span>${fmt(r.air_loss_pct, 2, " %")}</span>
+      <span>ขาดนานสุด</span><span>${fmt(r.gap_max_ms, 0, " ms")}</span>
+      <span>RSSI</span><span>${fmt(r.rssi_median, 0, " dBm")}</span>
+      <span>เคลื่อนไหวหลังสัญญาณ</span><span>${r.motion_ratio === null ? "–" : "x" + r.motion_ratio}</span>
+    </div>
+    ${[...(r.reasons || []).map((x) => `<li class="s-bad">${esc(x)}</li>`), ...(r.warnings || []).map((x) => `<li class="s-warn">${esc(x)}</li>`)].length
+      ? `<ul>${(r.reasons || []).map((x) => `<li class="s-bad">${esc(x)}</li>`).join("")}${(r.warnings || []).map((x) => `<li class="s-warn">${esc(x)}</li>`).join("")}</ul>` : ""}`;
+}
+
+function renderProgress(st) {
+  const v = st.batch?.volunteer || st.last_result?.volunteer || st.volunteers[0] || "–";
+  const showV = v === "none" ? (st.volunteers[0] || "none") : v;
+  $("#pv").textContent = showV;
+  const c = st.counts[showV] || {}, none = st.counts["none"] || {};
+  $("#progress").innerHTML = App.cfg.activities.map((a) => {
+    const n = (a.no_volunteer ? none : c)[a.id] || 0, pct = Math.min(100, n / a.target * 100);
+    return `<tr><td>${esc(a.name)}</td><td><span class="tag ${a.label}">${a.label}</span></td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums">${n}/${a.target}</td>
+      <td style="width:35%"><div class="bar ${n >= a.target ? "done" : ""}"><i style="width:${pct}%"></i></div></td></tr>`;
+  }).join("");
+}
+
+// ------------------------------------------------------------------ charts
+function fitCanvas(c) {
+  const r = c.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  return [w, h];
+}
+const wfOff = document.createElement("canvas");
+let scale = 30;
+
+function drawWaterfall() {
+  const c = $("#wf"), [W, H] = fitCanvas(c), g = c.getContext("2d");
+  const win = App.cfg.window_s, tEnd = serverNow() - 0.08, tStart = tEnd - win;
+  const NSC = 52, cols = Math.min(W, 1000);
+  wfOff.width = cols; wfOff.height = NSC;
+  const og = wfOff.getContext("2d"), img = og.createImageData(cols, NSC), px = img.data;
+  let mx = 1;
+  for (const r of rows) for (let i = 0; i < NSC; i++) if (r.a[i] > mx) mx = r.a[i];
+  scale = scale * 0.9 + mx * 0.1;
+  $("#wf-scale").textContent = "สเกล 0–" + Math.round(scale);
+  let j = 0;
+  for (let x = 0; x < cols; x++) {
+    const t = tStart + (x + 0.5) / cols * win;
+    while (j + 1 < rows.length && rows[j + 1].t <= t) j++;
+    let r = rows[j];
+    if (r && j + 1 < rows.length && Math.abs(rows[j + 1].t - t) < Math.abs(r.t - t)) r = rows[j + 1];
+    const ok = r && Math.abs(r.t - t) < 0.06;
+    for (let y = 0; y < NSC; y++) {
+      const o = (y * cols + x) * 4;
+      if (ok) {
+        const v = Math.min(255, Math.round(r.a[y] / scale * 255)) * 3;
+        px[o] = PALETTE[v]; px[o + 1] = PALETTE[v + 1]; px[o + 2] = PALETTE[v + 2];
+      } else { px[o] = px[o + 1] = px[o + 2] = 0; }
+      px[o + 3] = 255;
+    }
+  }
+  og.putImageData(img, 0, 0);
+  g.imageSmoothingEnabled = false;
+  g.drawImage(wfOff, 0, 0, W, H);
+  drawMarks(g, W, H, tStart, win);
+}
+
+function drawMotion() {
+  const c = $("#mo"), [W, H] = fitCanvas(c), g = c.getContext("2d");
+  const win = App.cfg.window_s, tEnd = serverNow() - 0.08, tStart = tEnd - win;
+  g.fillStyle = "#000"; g.fillRect(0, 0, W, H);
+  drawMarks(g, W, H, tStart, win, true);
+  if (motion.length < 2) return;
+  let mx = 0.5;
+  for (const [, v] of motion) if (v > mx) mx = v;
+  g.strokeStyle = "#ffd166"; g.lineWidth = 2 * (window.devicePixelRatio || 1);
+  g.beginPath();
+  motion.forEach(([t, v], i) => {
+    const x = (t - tStart) / win * W, y = H - 4 - v / (mx * 1.1) * (H - 8);
+    i ? g.lineTo(x, y) : g.moveTo(x, y);
+  });
+  g.stroke();
+}
+
+function drawMarks(g, W, H, tStart, win, fillSpan) {
+  const dpr = window.devicePixelRatio || 1;
+  for (const m of marks.values()) {
+    const x0 = (m.t_start - tStart) / win * W, x1 = (m.t_end - tStart) / win * W;
+    if (fillSpan) { g.fillStyle = "rgba(62,207,142,.18)"; g.fillRect(x0, 0, x1 - x0, H); }
+    g.fillStyle = "rgba(62,207,142,.9)";
+    g.fillRect(x0, 0, 2 * dpr, H); g.fillRect(x1, 0, 2 * dpr, H);
+    if (m.cue_at) { g.fillStyle = "#ff5d5d"; g.fillRect((m.cue_at - tStart) / win * W - dpr, 0, 3 * dpr, H); }
+  }
+}
+
+function frame() {
+  if (App.cfg) { drawWaterfall(); drawMotion(); }
+  if (App.status && !isConnected()) $("#conn").textContent = "ขาดการเชื่อมต่อกับโปรแกรม";
+  requestAnimationFrame(frame);
+}
+
+// ------------------------------------------------------------------ keys
+document.addEventListener("keydown", async (e) => {
+  const map = { k: "keep", r: "redo", d: "discard", escape: "stop" };
+  const action = map[e.key.toLowerCase()];
+  if (!action) return;
+  try { await api(action); } catch (err) { flashError(err.message); }
+});
+function flashError(msg) {
+  const ban = $("#banner"); ban.textContent = msg; ban.classList.add("on");
+  setTimeout(() => ban.classList.remove("on"), 2500);
+}
+
+(async () => {
+  await loadConfig();
+  $("#session").textContent = `${App.cfg.session} · ${App.cfg.location}`;
+  $("#datadir").textContent = "📁 " + App.cfg.data_dir;
+  $("#phone").textContent = (App.cfg.remote_urls[0] || "(ไม่มีเครือข่าย)") + (App.cfg.pin_required ? "  (ต้องใส่ PIN)" : "");
+  if (App.cfg.cue.sound) {
+    $("#unlock").hidden = false;
+    document.addEventListener("pointerdown", () => { unlockAudio(); $("#unlock").hidden = true; }, { once: true });
+  }
+  connect("monitor", onStatus, onRows);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
