@@ -28,6 +28,7 @@ STATIC = {
     "/": ("monitor.html", "text/html; charset=utf-8"),
     "/m": ("remote.html", "text/html; charset=utf-8"),
     "/common.js": ("common.js", "text/javascript; charset=utf-8"),
+    "/waterfall.js": ("waterfall.js", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }
 STREAM_PERIOD_S = 0.1

@@ -363,3 +363,23 @@ def test_qr_route_without_network_is_404(tmp_path, monkeypatch):
     assert status == 404
     assert b"<svg" not in body
 
+
+def test_server_serves_waterfall_script(tmp_path):
+    import threading
+    import urllib.request
+
+    from csirec import server as server_mod
+
+    cfg = make_cfg(tmp_path)
+    object.__setattr__(cfg, "host", "127.0.0.1")
+    object.__setattr__(cfg, "port", 18768)
+    srv = server_mod.make_server(Engine(cfg, "TEST"))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:18768/waterfall.js", timeout=5) as r:
+            assert r.status == 200
+            assert r.headers["Content-Type"].startswith("text/javascript")
+            assert b"function ampRange" in r.read()
+    finally:
+        srv.shutdown()
+        srv.server_close()
