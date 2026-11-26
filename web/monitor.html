@@ -11,6 +11,10 @@
   header h1 { font-size: 20px; margin: 0; }
   header .grow { flex: 1; }
   .phone { font-family: Consolas, Menlo, monospace; font-size: 15px; }
+  #qr { width: 72px; height: 72px; background: #fff; border-radius: 4px; cursor: zoom-in; }
+  #qr-box .qr-big { width: min(80vh, 80vw); height: min(80vh, 80vw); background: #fff; border-radius: 8px; }
+  #qr-box { flex-direction: column; gap: 14px; cursor: zoom-out; }
+  #qr-box .phone { font-size: clamp(16px, 2vw, 26px); }
   main { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 12px; min-height: 0; }
   .stage { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
     min-height: 300px; position: relative; overflow: hidden; }
@@ -61,6 +65,7 @@
   <span class="chip" id="conn">กำลังเชื่อมต่อ…</span>
   <span class="grow"></span>
   <span class="muted">มือถือเปิด</span> <span class="phone" id="phone">–</span>
+  <img id="qr" src="/api/qr.svg" alt="QR สำหรับมือถือ" title="กดเพื่อขยาย" hidden onload="this.hidden = false">
 </header>
 
 <main>
@@ -106,6 +111,11 @@
 </section>
 
 <div class="flash" id="flash"><div class="t" id="flash-t"></div><div class="s" id="flash-s"></div></div>
+<div class="overlay" id="qr-box" hidden>
+  <img class="qr-big" src="/api/qr.svg" alt="QR สำหรับมือถือ">
+  <div class="phone" id="qr-url"></div>
+  <div class="muted">สแกนด้วยกล้องมือถือ (ใส่ PIN ให้แล้ว) · กดที่ไหนก็ได้หรือ Esc เพื่อปิด</div>
+</div>
 <div class="overlay" id="unlock" hidden>
   <div><div style="font-size:34px;font-weight:800">คลิกที่ใดก็ได้เพื่อเปิดเสียง</div>
   <div class="muted" style="margin-top:8px">เบราว์เซอร์ต้องให้คลิกหนึ่งครั้งก่อนเล่นเสียงสัญญาณ</div></div>
@@ -344,6 +354,10 @@ function frame() {
 
 // ------------------------------------------------------------------ keys
 document.addEventListener("keydown", async (e) => {
+  if (!$("#qr-box").hidden) {  // Esc closes the QR, it must not also stop the recording
+    if (e.key === "Escape") $("#qr-box").hidden = true;
+    return;
+  }
   const map = { k: "keep", r: "redo", d: "discard", escape: "stop" };
   const action = map[e.key.toLowerCase()];
   if (!action) return;
@@ -359,6 +373,9 @@ function flashError(msg) {
   $("#session").textContent = `${App.cfg.session} · ${App.cfg.location}`;
   $("#datadir").textContent = "📁 " + App.cfg.data_dir;
   $("#phone").textContent = (App.cfg.remote_urls[0] || "(ไม่มีเครือข่าย)") + (App.cfg.pin_required ? "  (ต้องใส่ PIN)" : "");
+  $("#qr-url").textContent = App.cfg.remote_urls[0] || "";
+  $("#qr").onclick = () => { $("#qr-box").hidden = false; };
+  $("#qr-box").onclick = () => { $("#qr-box").hidden = true; };
   if (App.cfg.cue.sound) {
     $("#unlock").hidden = false;
     document.addEventListener("pointerdown", () => { unlockAudio(); $("#unlock").hidden = true; }, { once: true });

@@ -272,6 +272,15 @@ function onStatus(st) {
 setInterval(() => { if (App.status && !isConnected()) $("#conn").textContent = "ขาดการเชื่อมต่อ"; }, 1000);
 document.addEventListener("pointerdown", unlockAudio);
 
+// Scanned from the QR on the computer: http://<ip>:<port>/m#pin=1234 . Keep the PIN, then drop it
+// from the address bar so it is not left in the tab or the history.
+(() => {
+  const m = /(?:^#|&)pin=([^&]*)/.exec(location.hash);
+  if (!m) return;
+  try { setPin(decodeURIComponent(m[1])); } catch { /* malformed: ask for the PIN as usual */ }
+  history.replaceState(null, "", location.pathname + location.search);
+})();
+
 (async () => {
   await loadConfig();
   if (App.cfg.pin_required && !getPin()) askPin();

@@ -3,6 +3,7 @@
 GET  /            monitor page (the computer next to the Rx)
 GET  /m           remote page (phone)
 GET  /api/config  settings the pages need (never the PIN)
+GET  /api/qr.svg  QR of the phone address with the PIN in it (this computer only)
 GET  /api/stream  server-sent events, 10 per second (?view=monitor adds waterfall rows)
 POST /api/cmd     {"pin": "...", "action": "start|stop|keep|redo|discard", "args": {...}}
 """
@@ -17,9 +18,10 @@ import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from .engine import CommandError, Engine
+from .qr import qr_svg
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 STATIC = {
@@ -48,6 +50,19 @@ def lan_addresses() -> list[str]:
     except OSError:
         pass
     return ips
+
+
+def remote_target(pin: str, port: int, ips: list[str]) -> str | None:
+    """The address a phone scans: the remote page, with the PIN after # so it never reaches a
+    server log. None when this computer has no network address."""
+    if not ips:
+        return None
+    url = f"http://{ips[0]}:{port}/m"
+    return url + "#pin=" + quote(pin, safe="") if pin else url
+
+
+def _is_local(addr: str) -> bool:
+    return addr in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
 
 
 def make_server(engine: Engine) -> ThreadingHTTPServer:
@@ -80,6 +95,13 @@ def make_server(engine: Engine) -> ThreadingHTTPServer:
                 port = cfg.port
                 urls = [f"http://{ip}:{port}/m" for ip in lan_addresses()]
                 self._json(200, {**public, "remote_urls": urls})
+            elif url.path == "/api/qr.svg":
+                if not _is_local(self.client_address[0]):  # the QR carries the PIN
+                    return self._send(403, b"forbidden", "text/plain")
+                target = remote_target(cfg.pin, cfg.port, lan_addresses())
+                if not target:
+                    return self._send(404, b"no network address", "text/plain")
+                self._send(200, qr_svg(target).encode(), "image/svg+xml")
             elif url.path == "/api/stream":
                 view = parse_qs(url.query).get("view", ["remote"])[0]
                 self._stream(view == "monitor")
@@ -117,7 +139,7 @@ def make_server(engine: Engine) -> ThreadingHTTPServer:
                     raise ValueError
             except ValueError:
                 return self._json(400, {"ok": False, "error": "bad request"})
-            local = self.client_address[0] in ("127.0.0.1", "::1")
+            local = _is_local(self.client_address[0])
             if cfg.pin and not local and not hmac.compare_digest(str(req.get("pin", "")), cfg.pin):
                 return self._json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "PIN ไม่ถูกต้อง"})
             args = req.get("args") if isinstance(req.get("args"), dict) else {}

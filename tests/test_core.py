@@ -273,3 +273,93 @@ def test_stop_during_recording_writes_nothing(tmp_path):
     e.command("stop", {})
     assert e.phase == "idle"
     assert not list((cfg.data_dir / "test").rglob("*.bin"))
+
+
+def test_remote_target_with_and_without_pin():
+    from csirec.server import remote_target
+
+    ips = ["192.168.1.45", "172.18.96.1"]
+    assert remote_target("1234", 8765, ips) == "http://192.168.1.45:8765/m#pin=1234"
+    assert remote_target("", 8765, ips) == "http://192.168.1.45:8765/m"
+
+
+def test_remote_target_quotes_pin():
+    from csirec.server import remote_target
+
+    assert (
+        remote_target("a#b&c d", 8765, ["10.0.0.2"]) == "http://10.0.0.2:8765/m#pin=a%23b%26c%20d"
+    )
+
+
+def test_remote_target_no_network():
+    from csirec.server import remote_target
+
+    assert remote_target("1234", 8765, []) is None
+
+
+def test_is_local():
+    from csirec.server import _is_local
+
+    assert _is_local("127.0.0.1")
+    assert _is_local("::1")
+    assert _is_local("::ffff:127.0.0.1")
+    assert not _is_local("192.168.1.20")
+
+
+def test_qr_route_serves_svg_only_to_this_computer(tmp_path, monkeypatch):
+    import threading
+    import urllib.request
+
+    from csirec import server as server_mod
+
+    monkeypatch.setattr(server_mod, "lan_addresses", lambda: ["192.168.1.45"])
+    cfg = make_cfg(tmp_path)
+    object.__setattr__(cfg, "host", "127.0.0.1")
+    object.__setattr__(cfg, "port", 18766)
+    srv = server_mod.make_server(Engine(cfg, "TEST"))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:18766/api/qr.svg", timeout=5) as r:
+            assert r.status == 200
+            assert r.headers["Content-Type"].startswith("image/svg+xml")
+            assert r.read().startswith(b"<svg")
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def _get_qr(tmp_path, monkeypatch, ips, local):
+    import threading
+    import urllib.error
+    import urllib.request
+
+    from csirec import server as server_mod
+
+    monkeypatch.setattr(server_mod, "lan_addresses", lambda: ips)
+    monkeypatch.setattr(server_mod, "_is_local", lambda addr: local)
+    cfg = make_cfg(tmp_path)
+    object.__setattr__(cfg, "host", "127.0.0.1")
+    object.__setattr__(cfg, "port", 18767)
+    srv = server_mod.make_server(Engine(cfg, "TEST"))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:18767/api/qr.svg", timeout=5) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_qr_route_refuses_other_devices(tmp_path, monkeypatch):
+    status, body = _get_qr(tmp_path, monkeypatch, ["192.168.1.45"], local=False)
+    assert status == 403
+    assert b"<svg" not in body
+
+
+def test_qr_route_without_network_is_404(tmp_path, monkeypatch):
+    status, body = _get_qr(tmp_path, monkeypatch, [], local=True)
+    assert status == 404
+    assert b"<svg" not in body
+
