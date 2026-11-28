@@ -22,22 +22,30 @@
   .sec-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
   .sec-h h2 { font-size: 18px; margin: 0; }
   .sec-h .muted { font-size: 14px; }
-  .row { display: grid; gap: 10px; align-items: center; padding: 8px 6px; border-bottom: 1px solid var(--line); font-size: 15px; }
+  /* each list is one grid and its rows are subgrids, so every column lines up from row to row */
+  .list { display: grid; column-gap: 18px; }
+  .list > .row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center;
+    min-height: 52px; padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: 15px; }
+  .list > .pdf-steps { grid-column: 1 / -1; }
+  #rooms { grid-template-columns: 28px max-content minmax(0, 1fr) auto auto; }
+  #acts { grid-template-columns: max-content max-content max-content max-content max-content max-content minmax(0, 1fr) auto; }
+  #steps { grid-template-columns: 28px max-content minmax(0, 1fr) auto auto; }
   .row:last-child { border-bottom: 0; }
   .row.pdf { color: var(--muted); }
   .row.pdf b { color: var(--text); }
   .row.is-hidden { opacity: .55; }
-  .rooms .row { grid-template-columns: 56px minmax(0, 1.2fr) minmax(0, 1.4fr) auto auto; }
-  .acts .row { grid-template-columns: minmax(0, 1.6fr) auto minmax(0, 2.4fr) auto auto; }
-  .steps .row { grid-template-columns: 40px minmax(0, 2fr) auto auto auto; }
+  .row > .tag { justify-self: start; }
   .id { font-family: Consolas, Menlo, monospace; font-size: 14px; }
-  .tags { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tags { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
   .tag.extra { color: var(--info); }
   .acts-btn { display: flex; gap: 6px; justify-content: flex-end; }
   .acts-btn button { min-height: 40px; min-width: 44px; padding: 0 10px; font-size: 14px; }
-  .times { display: flex; gap: 10px; flex-wrap: wrap; font-size: 14px; }
-  .times label { display: inline-flex; align-items: center; gap: 4px; }
-  .times input { width: 66px; min-height: 36px; padding: 4px 6px; text-align: right; }
+  .t { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; white-space: nowrap; }
+  .t input { width: 64px; min-height: 36px; padding: 4px 8px; text-align: right; }
+  @media (max-width: 760px) {
+    .list { display: block; }
+    .list > .row { display: flex; flex-wrap: wrap; gap: 8px 12px; }
+  }
   .add { margin-top: 10px; min-height: 44px; padding: 0 14px; }
   .pdf-steps { font-size: 14px; color: var(--muted); padding: 6px; }
 
@@ -73,19 +81,19 @@
 
 <section class="panel rooms">
   <div class="sec-h"><h2>ห้องน้ำ</h2><span class="muted">ห้องที่เพิ่มใช้ลำดับขั้นเดียวกับแผน แต่ยอดทั้งหมดนับเป็นนอกแผน</span></div>
-  <div id="rooms"></div>
+  <div class="list" id="rooms"></div>
   <button class="btn-ghost add" data-add="room">+ เพิ่มห้อง</button>
 </section>
 
 <section class="panel acts">
   <div class="sec-h"><h2>ท่า</h2><span class="muted">ท่าในแผน PDF ปรับได้เฉพาะเวลานับถอยหลัง สัญญาณ และพัก (บันทึก 10 s ล็อกไว้)</span></div>
-  <div id="acts"></div>
+  <div class="list" id="acts"></div>
   <button class="btn-ghost add" data-add="activity">+ เพิ่มท่า</button>
 </section>
 
 <section class="panel steps">
   <div class="sec-h"><h2>ลำดับในรอบ</h2><span class="muted">ขั้นที่เพิ่มต่อท้ายแผน ใช้ได้กับทุกห้อง</span></div>
-  <div id="steps"></div>
+  <div class="list" id="steps"></div>
   <button class="btn-ghost add" data-add="step">+ เพิ่มขั้น</button>
 </section>
 
@@ -141,15 +149,17 @@ function render() {
 
   $("#acts").innerHTML = pdfActs().map((a) => {
     const t = X.timing[a.id] || {};
-    const inp = (k, lab) => `<label>${lab} <input type="number" min="0" step="0.5" data-time="${esc(a.id)}" data-k="${k}"
+    const inp = (k, lab) => `<label class="t">${lab} <input type="number" min="0" step="0.5" data-time="${esc(a.id)}" data-k="${k}"
       value="${t[k] ?? a[k]}" aria-label="${esc(a.name)}: ${lab} (วินาที)"> s</label>`;
     return `<div class="row pdf"><b>${esc(a.name)}</b><span class="tag ${stepTagOf(a)[0]}">${stepTagOf(a)[1]}</span>
-      <span class="times"><span>บันทึก ${a.duration_s} s</span>${inp("countdown_s", "นับ")}${a.cue_s || "cue_s" in t ? inp("cue_s", "สัญญาณ") : ""}${inp("rest_s", "พัก")}</span>
+      <span class="t">บันทึก ${a.duration_s} s</span>${inp("countdown_s", "นับ")}${a.cue_s || "cue_s" in t ? inp("cue_s", "สัญญาณ") : "<span></span>"}${inp("rest_s", "พัก")}
       <span class="tags"><span class="tag none">แผน PDF</span></span><span></span></div>`;
   }).join("") + X.activities.map((a, i) => {
     const inUse = X.steps.some((s) => [].concat(s.activity).includes(a.id));
+    const cue = a.cue_s ?? 3;
     return `<div class="row ${a.hidden ? "is-hidden" : ""}"><b>${esc(a.name || a.id)}</b><span class="tag ${tagOf(a)[0]}">${tagOf(a)[1]}</span>
-      <span class="times">บันทึก ${a.duration_s ?? 10} s · นับ ${a.countdown_s ?? 5} · สัญญาณ ${a.cue_s ?? 3} · พัก ${a.rest_s ?? 15}</span>
+      <span class="t">บันทึก ${a.duration_s ?? 10} s</span><span class="t">นับ ${a.countdown_s ?? 5} s</span>
+      <span class="t">${cue ? `สัญญาณ ${cue} s` : ""}</span><span class="t">พัก ${a.rest_s ?? 15} s</span>
       <span class="tags"><span class="tag extra">นอกแผน</span>${a.hidden ? '<span class="tag none">ซ่อน</span>' : ""}</span>
       <span class="acts-btn">${btn("แก้", `data-edit="activity" data-i="${i}"`)}
         ${btn(a.hidden ? "แสดง" : "ซ่อน", `data-hide="activities" data-i="${i}"`)}
