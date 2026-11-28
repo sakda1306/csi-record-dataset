@@ -2,10 +2,13 @@
 
 GET  /            monitor page (the computer next to the Rx)
 GET  /m           remote page (phone)
+GET  /plan        plan editor (rooms, activities, steps outside the PDF plan)
 GET  /api/config  settings the pages need (never the PIN)
 GET  /api/qr.svg  QR of the phone address with the PIN in it (this computer only)
 GET  /api/stream  server-sent events, 10 per second (?view=monitor adds waterfall rows)
 POST /api/cmd     {"pin": "...", "action": "start|stop|keep|redo|discard", "args": {...}}
+GET  /api/plan    the additions to the PDF plan and the kept takes per room / activity
+POST /api/plan    {"pin": "...", "extra": {...}} or {"pin": "...", "reset": true}
 """
 
 from __future__ import annotations
@@ -27,12 +30,14 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 STATIC = {
     "/": ("monitor.html", "text/html; charset=utf-8"),
     "/m": ("remote.html", "text/html; charset=utf-8"),
+    "/plan": ("plan.html", "text/html; charset=utf-8"),
     "/common.js": ("common.js", "text/javascript; charset=utf-8"),
     "/waterfall.js": ("waterfall.js", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }
 STREAM_PERIOD_S = 0.1
 MAX_BODY = 4096
+MAX_PLAN_BODY = 256 * 1024  # the whole plan-extra.json
 
 
 def lan_addresses() -> list[str]:
@@ -67,9 +72,7 @@ def _is_local(addr: str) -> bool:
 
 
 def make_server(engine: Engine) -> ThreadingHTTPServer:
-    cfg = engine.cfg
-    public = cfg.public()
-
+    # engine.cfg is read on every request: the plan can change while the server runs
     class Handler(BaseHTTPRequestHandler):
         server_version = "csirec"
 
@@ -93,13 +96,15 @@ def make_server(engine: Engine) -> ThreadingHTTPServer:
                 name, ctype = STATIC[url.path]
                 self._send(200, (WEB_DIR / name).read_bytes(), ctype)
             elif url.path == "/api/config":
-                port = cfg.port
-                urls = [f"http://{ip}:{port}/m" for ip in lan_addresses()]
-                self._json(200, {**public, "remote_urls": urls})
+                cfg = engine.cfg
+                urls = [f"http://{ip}:{cfg.port}/m" for ip in lan_addresses()]
+                self._json(200, {**cfg.public(), "remote_urls": urls})
+            elif url.path == "/api/plan":
+                self._json(200, engine.plan_info())
             elif url.path == "/api/qr.svg":
                 if not _is_local(self.client_address[0]):  # the QR carries the PIN
                     return self._send(403, b"forbidden", "text/plain")
-                target = remote_target(cfg.pin, cfg.port, lan_addresses())
+                target = remote_target(engine.cfg.pin, engine.cfg.port, lan_addresses())
                 if not target:
                     return self._send(404, b"no network address", "text/plain")
                 self._send(200, qr_svg(target).encode(), "image/svg+xml")
@@ -129,11 +134,12 @@ def make_server(engine: Engine) -> ThreadingHTTPServer:
                 return
 
         def do_POST(self):
-            if urlparse(self.path).path != "/api/cmd":
+            path = urlparse(self.path).path
+            if path not in ("/api/cmd", "/api/plan"):
                 return self._send(404, b"not found", "text/plain")
             try:
                 n = int(self.headers.get("Content-Length", "0"))
-                if n > MAX_BODY:
+                if n > (MAX_PLAN_BODY if path == "/api/plan" else MAX_BODY):
                     return self._json(413, {"ok": False, "error": "request too large"})
                 req = json.loads(self.rfile.read(n) or b"{}")
                 if not isinstance(req, dict):
@@ -141,16 +147,25 @@ def make_server(engine: Engine) -> ThreadingHTTPServer:
             except ValueError:
                 return self._json(400, {"ok": False, "error": "bad request"})
             local = _is_local(self.client_address[0])
-            if cfg.pin and not local and not hmac.compare_digest(str(req.get("pin", "")), cfg.pin):
+            pin = engine.cfg.pin
+            if pin and not local and not hmac.compare_digest(str(req.get("pin", "")), pin):
                 return self._json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "PIN ไม่ถูกต้อง"})
-            args = req.get("args") if isinstance(req.get("args"), dict) else {}
-            who = "คอม" if local else self.client_address[0]
             try:
+                if path == "/api/plan":
+                    if req.get("reset") is True:
+                        engine.reset_plan()
+                    elif isinstance(req.get("extra"), dict):
+                        engine.set_plan(req["extra"])
+                    else:
+                        return self._json(400, {"ok": False, "error": "bad request"})
+                    return self._json(200, {"ok": True})
+                args = req.get("args") if isinstance(req.get("args"), dict) else {}
+                who = "คอม" if local else self.client_address[0]
                 self._json(200, engine.command(str(req.get("action", "")), args, who))
             except CommandError as e:
                 self._json(409, {"ok": False, "error": str(e)})
 
-    srv = _Server((cfg.host, cfg.port), Handler)
+    srv = _Server((engine.cfg.host, engine.cfg.port), Handler)
     srv.daemon_threads = True
     return srv
 

@@ -16,10 +16,11 @@ from collections import Counter, deque
 import numpy as np
 import serial
 
-from .config import NAME_RE, Config
+from . import plan
+from .config import NAME_RE, Config, ConfigError
 from .csi_serial import Frame, FrameReader, LinkStats, open_quiet
 from .quality import DATA_SC, amplitudes, dedupe, evaluate
-from .storage import NO_VOLUNTEER, Storage
+from .storage import Storage
 
 FINISH_GRACE_S = 0.25  # wait for the last frames still in the serial pipe
 LIVE_STATS_S = 5.0
@@ -33,7 +34,9 @@ class CommandError(Exception):
 
 class Engine:
     def __init__(self, cfg: Config, port: str):
+        cfg, plan_msg = plan.with_saved_extra(cfg)  # the PDF plan + additions from the web
         self.cfg = cfg
+        self.plan_rev = 0  # +1 on every plan change: pages reload /api/config
         self.port = port
         self.store = Storage(cfg)
         self.lock = threading.RLock()
@@ -62,14 +65,19 @@ class Engine:
         self.take_seq = 0
         self.pending: dict | None = None  # finished take waiting for keep/redo
         self.last_result: dict | None = None
-        self.counts: Counter = self.store.load_counts()
-        self.volunteers = list(cfg.volunteers)
-        for v, _ in self.counts:
-            if v not in self.volunteers and v != NO_VOLUNTEER:
+        self.counts: Counter
+        self.baselines: dict[tuple[str, str], str]  # (room, volunteer) -> baseline file
+        self.counts, self.baselines = self.store.load_counts()
+        self.volunteers: list[str] = []
+        for v in [v for r in cfg.rooms for v in r.volunteers] + [v for _, v, _ in self.counts]:
+            if v not in self.volunteers:
                 self.volunteers.append(v)
+        self.round: dict | None = None  # room + volunteer of the last start
         self.log: deque[str] = deque(maxlen=30)
         self._snapshot: dict = {}
         self.note(f"session {cfg.session} -> {self.store.session_dir}")
+        if plan_msg:
+            self.note(plan_msg)
 
     # ================================================================== threads
     def start(self) -> None:
@@ -192,19 +200,32 @@ class Engine:
         elif self.phase == "rest" and now >= self.phase_end:
             self._begin_countdown(now)
 
+    def _pick_activity(self, b: dict) -> str:
+        """The activity of the next take. In a step with several activities, the one with the
+        most takes still to do goes next (first in the list on a tie), so they take turns."""
+        acts = b["acts"]
+        if len(acts) == 1:
+            return acts[0]
+        if not b.get("need"):
+            return acts[b["done"] % len(acts)]
+        left = [b["need"][a] - self.counts[(b["room"], b["volunteer"], a)] for a in acts]
+        return acts[left.index(max(left))]
+
     def _begin_countdown(self, now: float) -> None:
         b = self.batch
-        act = self.cfg.activity(b["activity"])
+        act = self.cfg.activity(self._pick_activity(b))
         self.take_seq += 1
         t_start = now + act.countdown_s
         self.take = {
             "seq": self.take_seq,
             "activity": act.id,
             "name": act.name,
+            "desc": act.desc,
             "label": act.label,
             "cue_text": act.cue_text,
+            "room": b["room"],
             "volunteer": b["volunteer"],
-            "position": b["position"],
+            "step_name": b["step_name"],
             "rep": b["done"] + 1,
             "reps": b["reps"],
             "t_start": t_start,
@@ -229,26 +250,44 @@ class Engine:
             act.expect_motion,
             self.cfg,
             self.checksum_errors - self.take_ck_start,
+            act.ends_still,
         )
         kept, _ = dedupe(frames, self.cfg.rate_hz)
+        room = self.cfg.room(tk["room"])
+        rnd = (room.id, tk["volunteer"])
         meta = {
-            "schema": 1,
+            "schema": 2,
             "frame_format": "csi_rx serial frame v2 (see firmware/csi_rx/csi_rx.ino)",
             "session": self.cfg.session,
             "location": self.cfg.location,
+            "room": room.id,
+            "room_name": room.name,
+            "room_use": room.use,
+            "room_setup": room.setup,
+            "test_only": room.test_only,
             "recorded_at": dt.datetime.fromtimestamp(tk["t_start"])
             .astimezone()
             .isoformat(timespec="milliseconds"),
             "t_start": tk["t_start"],
             "volunteer": tk["volunteer"],
-            "position": tk["position"],
+            "people_in_room": 0 if act.no_volunteer else 1,
             "activity": act.id,
             "activity_name": act.name,
+            "activity_desc": act.desc,
             "label": act.label,
+            "train": act.train,
+            "step": tk["step_name"],
+            # inside the PDF plan: a PDF room and a take still within the PDF target
+            "in_plan": not room.extra and self.counts[(*rnd, act.id)] < act.target,
+            "plan_extra_updated": self.cfg.plan_extra.get("updated"),
             "note": b.get("note", ""),
             "duration_s": act.duration_s,
             "countdown_s": act.countdown_s,
             "cue": None,
+            "action_start_s": q.get("action_start_s"),
+            "action_end_s": q.get("action_end_s"),
+            "action_times": "estimated from CSI motion (0.25 s blocks)",
+            "baseline_file": None if act.no_volunteer else self.baselines.get(rnd),
             "rate_hz_target": self.cfg.rate_hz,
             "device": dict(self.device),
             "quality": q,
@@ -261,13 +300,14 @@ class Engine:
                 "csv_row": int(np.searchsorted(times, cue_off)) if times.size else None,
                 "note": "sound/flash at this time; the movement starts right after it",
             }
-        paths = self.store.write_take(meta, frames, kept)
+        paths = self.store.write_take(meta, frames, kept, min_trial=self.counts[(*rnd, act.id)] + 1)
         self.pending = {"meta": meta, "paths": paths}
         self.last_result = {
             "seq": tk["seq"],
             "take_id": meta["take_id"],
             "activity": act.id,
             "name": act.name,
+            "room": room.id,
             "volunteer": tk["volunteer"],
             "rep": tk["rep"],
             "reps": tk["reps"],
@@ -284,6 +324,9 @@ class Engine:
                     "rssi_median",
                     "motion_ratio",
                     "frames",
+                    "frames_expected",
+                    "action_start_s",
+                    "action_end_s",
                 )
             },
         }
@@ -291,15 +334,19 @@ class Engine:
             f"{meta['take_id']}: {q['verdict'].upper()} {q['rate_hz']} Hz "
             f"loss {q['air_loss_pct']} % {' '.join(q['reasons'] + q['warnings'])}"
         )
-        if q["verdict"] == "pass" and self.cfg.auto_keep_pass:
+        held = self.cfg.review_warnings and q["warnings"]
+        if q["verdict"] == "pass" and self.cfg.auto_keep_pass and not held:
             self._keep("auto")
         else:
             self.phase, self.phase_end = "review", None
 
     def _keep(self, by: str) -> None:
         p = self.pending
-        self.store.keep(p["meta"], by)
-        self.counts[(p["meta"]["volunteer"], p["meta"]["activity"])] += 1
+        m = p["meta"]
+        self.store.keep(m, by)
+        self.counts[(m["room"], m["volunteer"], m["activity"])] += 1
+        if self.cfg.activity(m["activity"]).no_volunteer:
+            self.baselines[(m["room"], m["volunteer"])] = m["file"]
         self.last_result["status"] = "kept"
         self.pending = None
         self.batch["done"] += 1
@@ -308,11 +355,71 @@ class Engine:
     def _next_or_idle(self) -> None:
         b = self.batch
         if b["done"] >= b["reps"]:
-            self.note(f"ครบ {b['reps']} เทค: {b['activity']} / {b['volunteer']}")
+            self.note(f"ครบ {b['reps']} เทค: {b['step_name']} / {b['room']} {b['volunteer']}")
             self.phase, self.phase_end, self.take, self.batch = "idle", None, None, None
         else:
-            act = self.cfg.activity(b["activity"])
+            act = self.cfg.activity(self.take["activity"])
             self.phase, self.phase_end, self.take = "rest", time.time() + act.rest_s, None
+
+    # ================================================================== plan
+    def plan_info(self) -> dict:
+        """The applied additions and how many kept takes each room / activity has."""
+        with self.lock:
+            rooms: Counter = Counter()
+            acts: Counter = Counter()
+            for (r, _, a), n in self.counts.items():
+                rooms[r] += n
+                acts[a] += n
+            return {
+                "extra": self.cfg.plan_extra,
+                "used": {"rooms": dict(rooms), "activities": dict(acts)},
+            }
+
+    def set_plan(self, extra: dict) -> None:
+        with self.lock:
+            self._idle_for_plan()
+            try:
+                new = plan.build(self.cfg, extra)
+            except ConfigError as e:
+                raise CommandError(str(e)) from None
+            used = self.plan_info()["used"]
+            for kind, key, old, now in (
+                ("ห้อง", "rooms", self.cfg.rooms, new.rooms),
+                ("ท่า", "activities", self.cfg.activities, new.activities),
+            ):
+                kept = {x.id for x in now}
+                for x in old:
+                    n = used[key].get(x.id, 0)
+                    if x.id not in kept and n:
+                        raise CommandError(f"ลบ{kind} '{x.id}' ไม่ได้ มีข้อมูล {n} ครั้ง — ให้ซ่อนแทน")
+            try:
+                new = plan.save_extra(self.cfg, extra)
+            except OSError as e:
+                raise CommandError(f"บันทึกแผนไม่ได้: {e}") from None
+            self._swap_cfg(new, f"แก้แผน -> {plan.extra_path(new)}")
+
+    def reset_plan(self) -> None:
+        with self.lock:
+            self._idle_for_plan()
+            try:
+                new = plan.reset_extra(self.cfg)
+            except OSError as e:
+                raise CommandError(f"รีเซ็ตแผนไม่ได้: {e}") from None
+            self._swap_cfg(new, "กลับไปใช้แผน PDF (ไฟล์แผนเดิมย้ายไปเป็น plan-extra_old_*)")
+
+    def _idle_for_plan(self) -> None:
+        if self.phase != "idle":
+            raise CommandError("หยุดบันทึกก่อนแก้แผน")
+
+    def _swap_cfg(self, new: Config, msg: str) -> None:
+        self.cfg = new
+        self.store.cfg = new
+        for v in [v for r in new.rooms for v in r.volunteers]:
+            if v not in self.volunteers:
+                self.volunteers.append(v)
+        self.plan_rev += 1
+        self.note(msg)
+        self._snapshot = self._build_snapshot(time.time())
 
     # ================================================================== commands
     def command(self, action: str, args: dict, who: str = "remote") -> dict:
@@ -334,34 +441,63 @@ class Engine:
         if self.phase != "idle":
             raise CommandError("กำลังทำงานอยู่ กดหยุดก่อน")
         try:
-            act = self.cfg.activity(str(a.get("activity", "")))
+            room = self.cfg.room(str(a.get("room") or self.cfg.rooms[0].id))
         except KeyError:
-            raise CommandError("ไม่รู้จักท่านี้") from None
-        vol = NO_VOLUNTEER if act.no_volunteer else str(a.get("volunteer", "")).strip()
-        pos = str(a.get("position", "")).strip() or (self.cfg.positions or ["p1"])[0]
+            raise CommandError("ไม่รู้จักห้องนี้") from None
+        if room.hidden:
+            raise CommandError("ห้องนี้ถูกซ่อนในแผน")
+        vol = str(a.get("volunteer", "")).strip()
         if not NAME_RE.match(vol):
-            raise CommandError("ชื่ออาสาสมัครใช้ได้แค่ A-Z a-z 0-9 _ -")
-        if not NAME_RE.match(pos):
-            raise CommandError("ชื่อตำแหน่งใช้ได้แค่ A-Z a-z 0-9 _ -")
+            raise CommandError("รหัสอาสาสมัครใช้ได้แค่ A-Z a-z 0-9 _ - (ใช้รหัสแทนชื่อ)")
+        need = step_i = None
+        if a.get("step") is not None:
+            try:
+                step_i = int(a["step"])
+                if step_i < 0:
+                    raise IndexError
+                step = self.cfg.steps[step_i]
+            except (TypeError, ValueError, IndexError):
+                raise CommandError("ไม่รู้จักขั้นนี้ในแผน") from None
+            if all(self.cfg.activity(x).hidden for x in step.acts):
+                raise CommandError("ขั้นนี้ถูกซ่อนในแผน")
+            acts, name, need = list(step.acts), step.name, dict(step.cum)
+            left = sum(
+                max(0, min(step.per[x], step.cum[x] - self.counts[(room.id, vol, x)]))
+                for x in step.acts
+            )
+            default_reps = left or step.reps
+        else:
+            try:
+                act = self.cfg.activity(str(a.get("activity", "")))
+            except KeyError:
+                raise CommandError("ไม่รู้จักท่านี้") from None
+            acts, name, default_reps = [act.id], act.name, 1
         try:
-            reps = int(a.get("reps", 1))
+            reps = int(a.get("reps") or default_reps)
         except (TypeError, ValueError):
             raise CommandError("จำนวนเทคต้องเป็นตัวเลข") from None
         if not 1 <= reps <= 200:
             raise CommandError("จำนวนเทค 1-200")
         if not self.recent or time.time() - self.recent[-1][0] > 2.0:
             raise CommandError("ยังไม่มีสัญญาณจาก Rx — เช็ก Tx/Rx ก่อน")
-        if vol != NO_VOLUNTEER and vol not in self.volunteers:
+        if vol not in self.volunteers:
             self.volunteers.append(vol)
         self.batch = {
-            "activity": act.id,
+            "room": room.id,
             "volunteer": vol,
-            "position": pos,
+            "acts": acts,
+            "need": need,
+            "step": step_i,  # index in cfg.steps, None for a single activity
+            "step_name": name,
             "reps": reps,
             "done": 0,
             "note": str(a.get("note", ""))[:200],
         }
-        self.note(f"เริ่ม {act.id} x{reps} / {vol} / {pos} (สั่งจาก {who})")
+        self.round = {"room": room.id, "volunteer": vol}
+        self.note(f"เริ่ม {name} x{reps} / ห้อง {room.id} / {vol} (สั่งจาก {who})")
+        has_baseline_act = any(self.cfg.activity(x).no_volunteer for x in acts)
+        if not has_baseline_act and (room.id, vol) not in self.baselines:
+            self.note(f"ยังไม่มี baseline ของรอบ {room.id} {vol} — บันทึกห้องว่างก่อน")
         self._begin_countdown(time.time())
 
     def _cmd_stop(self, a: dict, who: str) -> None:
@@ -412,8 +548,11 @@ class Engine:
             "uart_lost": 0,
             "checksum_errors": self.checksum_errors,
             "motion": None,
+            "rx_ch": None,  # channel the Rx is receiving CSI on (from the frames)
             "status": "none",
         }
+        if frames:
+            live["rx_ch"] = Counter(f.channel for _, f in frames).most_common(1)[0][0]
         if len(frames) >= 3:
             st = LinkStats(rate_hz=self.cfg.rate_hz)
             kept = [(t, f) for t, f in frames if st.add(f)]
@@ -443,9 +582,9 @@ class Engine:
         return live
 
     def _build_snapshot(self, now: float) -> dict:
-        counts: dict[str, dict[str, int]] = {}
-        for (v, a), n in self.counts.items():
-            counts.setdefault(v, {})[a] = n
+        counts: dict[str, dict[str, dict[str, int]]] = {}  # room -> volunteer -> activity
+        for (r, v, a), n in self.counts.items():
+            counts.setdefault(r, {}).setdefault(v, {})[a] = n
         return {
             "server_time": now,
             "phase": self.phase,
@@ -456,7 +595,10 @@ class Engine:
             "link": self._live(now),
             "device": dict(self.device),
             "counts": counts,
+            "baselines": sorted(f"{r}/{v}" for r, v in self.baselines),
+            "round": dict(self.round) if self.round else None,
             "volunteers": list(self.volunteers),
+            "plan_rev": self.plan_rev,
             "log": list(self.log)[-8:],
             "session_dir": str(self.store.session_dir),
         }

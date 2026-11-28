@@ -6,109 +6,196 @@
 <title>CSI Recorder</title>
 <link rel="stylesheet" href="/style.css">
 <style>
-  body { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; gap: 12px; padding: 12px 16px; }
-  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-  header h1 { font-size: 20px; margin: 0; }
+  /* One screen, no page scroll on a laptop: header, then the stage + charts on the left and
+     link / last take / round plan on the right. Only the right column scrolls if it must. */
+  html, body { height: 100%; }
+  body { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; padding: 10px 14px; }
+  header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; white-space: nowrap; }
   header .grow { flex: 1; }
-  .phone { font-family: Consolas, Menlo, monospace; font-size: 15px; }
-  #qr { width: 72px; height: 72px; background: #fff; border-radius: 4px; cursor: zoom-in; }
+  #round { font-size: 16px; font-weight: 700; border-color: var(--info); }
+  #datadir { max-width: 36ch; overflow: hidden; text-overflow: ellipsis; display: inline-block; }
+  .phone { font-family: Consolas, Menlo, monospace; font-size: 14px; }
+  #qr { width: 52px; height: 52px; background: #fff; border-radius: 4px; cursor: zoom-in; }
   #qr-box .qr-big { width: min(80vh, 80vw); height: min(80vh, 80vw); background: #fff; border-radius: 8px; }
   #qr-box { flex-direction: column; gap: 14px; cursor: zoom-out; }
   #qr-box .phone { font-size: clamp(16px, 2vw, 26px); }
-  main { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 12px; min-height: 0; }
+
+  main { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(340px, 1fr); gap: 10px; min-height: 0; }
+  .left { display: grid; grid-template-rows: minmax(260px, 1fr) auto; gap: 10px; min-height: 0; }
+  .right { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; padding-right: 2px; }
+
+  /* stage: what the volunteer and the operator look at from across the room */
   .stage { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
-    min-height: 300px; position: relative; overflow: hidden; }
-  .stage .phase { font-size: 20px; letter-spacing: .04em; color: var(--muted); }
-  .stage .title { font-size: clamp(32px, 4.2vw, 60px); font-weight: 800; margin: 6px 0; }
-  .stage .big { font-size: clamp(80px, 12vw, 170px); font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
-  .stage .sub { font-size: clamp(18px, 1.8vw, 26px); color: var(--muted); margin-top: 8px; }
+    position: relative; overflow: hidden; padding-top: 44px; }
+  .stage .phase { font-size: 18px; letter-spacing: .04em; color: var(--muted); }
+  .stage .title { font-size: clamp(26px, min(4vw, 7vh), 58px); font-weight: 800; margin: 4px 0; text-wrap: balance; }
+  .stage .big { font-size: clamp(56px, min(11vw, 15vh), 160px); font-weight: 800; line-height: 1; }
+  .stage .sub { font-size: clamp(16px, min(1.7vw, 3.4vh), 26px); color: var(--muted); margin-top: 6px; }
+  .stage .desc { font-size: clamp(18px, min(2.1vw, 4vh), 30px); margin-top: 8px; max-width: 92%; text-wrap: balance; }
   .stage.ph-recording { box-shadow: inset 0 0 0 4px var(--bad); }
   .stage.ph-countdown { box-shadow: inset 0 0 0 4px var(--warn); }
-  .rec-dot { position: absolute; top: 14px; right: 18px; color: var(--bad); font-weight: 700; display: none; }
-  .ph-recording .rec-dot { display: block; animation: blink 1s steps(2) infinite; }
+  .stage-top { position: absolute; top: 12px; left: 16px; right: 16px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
+  .stage-top .rec-dot { justify-self: end; }
+  .rec-dot { color: var(--bad); font-weight: 700; visibility: hidden; }
+  .ph-recording .rec-dot { visibility: visible; animation: blink 1s steps(2) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
-  .timeline { width: 92%; height: 14px; background: var(--panel-2); border-radius: 7px; position: relative; margin-top: 18px; overflow: hidden; }
-  .timeline .fill { position: absolute; inset: 0 auto 0 0; background: var(--info); width: 0; }
+  .timeline { width: 92%; height: 16px; background: var(--panel-2); border-radius: 8px; position: relative; margin-top: 12px; overflow: hidden; }
+  .timeline .seg { position: absolute; top: 0; bottom: 0; opacity: .45; }
+  .timeline .fill { position: absolute; inset: 0 auto 0 0; background: rgba(255,255,255,.55); width: 0; }
   .timeline .cue { position: absolute; top: -2px; bottom: -2px; width: 4px; background: var(--bad); }
-  .side { display: grid; gap: 12px; align-content: start; }
-  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-  .tile { background: var(--panel-2); border-radius: 10px; padding: 8px 10px; }
-  .tile .k { font-size: 12px; color: var(--muted); }
-  .tile .v { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .result .verdict { font-size: 26px; font-weight: 800; }
-  .result ul { margin: 6px 0 0; padding-left: 18px; }
-  .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 14px; }
-  .log { font-family: Consolas, Menlo, monospace; font-size: 12px; color: var(--muted); white-space: pre-wrap; max-height: 150px; overflow: auto; }
-  .charts { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 12px; }
-  canvas { width: 100%; display: block; border-radius: 8px; background: #000; }
-  #wf { height: 190px; } #mo { height: 90px; margin-top: 8px; }
-  .chart-head { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  td { padding: 3px 4px; border-bottom: 1px solid var(--line); }
-  .bar { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; min-width: 60px; }
-  .bar > i { display: block; height: 100%; background: var(--info); }
-  .bar.done > i { background: var(--ok); }
-  .banner { padding: 8px 12px; border-radius: 10px; background: var(--bad); color: #fff; font-weight: 700; display: none; }
+  .tl-labels { width: 92%; position: relative; height: 22px; font-size: 15px; color: var(--muted); margin-top: 4px; }
+  .tl-labels span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  .banner { padding: 8px 12px; border-radius: 10px; background: var(--bad-strong); color: #fff; font-weight: 700; display: none; margin-top: 12px; }
   .banner.on { display: block; }
+
+  /* charts */
+  .charts canvas { width: 100%; display: block; border-radius: 8px; background: #000; }
+  #wf { height: clamp(96px, 17vh, 190px); } #mo { height: clamp(40px, 7vh, 90px); margin-top: 6px; }
+  .chart-head { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  .chart-head + canvas + .chart-head { margin-top: 6px; }
+
+  /* right column */
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .tile { background: var(--panel-2); border-radius: 10px; padding: 6px 10px; }
+  .tile .k { font-size: 12px; color: var(--muted); }
+  .tile .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .device { font-size: 13px; margin-top: 6px; }
+  .result .verdict { font-size: 22px; font-weight: 800; }
+  .result ul { margin: 6px 0 0; padding-left: 18px; font-size: 14px; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; font-size: 14px; }
+  .sec-title { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+  .sec-title b { font-size: 16px; }
+  .sec-title .muted { font-size: 13px; }
+  /* progress summary: label | bar | n/target */
+  .totals { display: grid; grid-template-columns: 3.4em 1fr auto; gap: 4px 10px; align-items: center; font-size: 13px; margin-bottom: 8px; }
+  .totals b { font-variant-numeric: tabular-nums; font-size: 14px; }
+  .plan .warnbox { font-size: 14px; padding: 6px 10px; margin-bottom: 8px; }
+
+  /* plan of the round */
+  .plan-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .ps { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto 44px 64px; gap: 8px; align-items: center;
+    padding: 4px 6px; border-radius: 8px; font-size: 14px; }
+  .ps .no { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center;
+    font-size: 12px; font-weight: 700; }
+  .ps .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ps .cnt { text-align: right; font-variant-numeric: tabular-nums; }
+  .ps .bar { height: 6px; }
+  .ps.done { color: var(--muted); }
+  .ps.done .no { background: var(--ok); border-color: var(--ok); color: #0b0d10; }
+  .ps.done .cnt { color: var(--ok); }
+  .ps.now { background: #1d2a3a; box-shadow: inset 3px 0 0 var(--info); }
+  .ps.now .no { border-color: var(--info); color: var(--info); }
+  .ps.now .name { font-weight: 700; }
+  .ps .now-tag { font-size: 12px; color: var(--info); margin-left: 6px; font-weight: 400; }
+  .brk { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); padding: 0 6px 0 38px; }
+  .brk::before, .brk::after { content: ""; flex: 1; border-top: 1px dashed var(--line); }
+
+  /* whole dataset */
+  .rooms { display: grid; gap: 8px; }
+  .room { background: var(--panel-2); border-radius: 10px; padding: 8px 10px; }
+  .room.cur { box-shadow: inset 0 0 0 1px var(--info); }
+  .room-h { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font-size: 14px; }
+  .room-h .bar { height: 6px; background: var(--bg); }
+  .room-h .n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .room-h .n small { color: var(--muted); margin-left: 6px; }
+  .vols { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-top: 6px; }
+  .vol { font-size: 12px; color: var(--muted); }
+  .vol .bar { height: 4px; margin-top: 2px; background: var(--bg); }
+  .vol b { color: var(--text); font-weight: 600; }
+  .vol.cur b { color: var(--info); }
+  .vol.full b { color: var(--ok); }
+  .xtra-h { font-size: 12px; font-weight: 700; color: var(--muted); padding: 8px 6px 2px; border-top: 1px dashed var(--line); margin-top: 4px; }
+  .room.out { border: 1px dashed var(--line); background: transparent; }
+  .out-row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 2px 0; }
+  .out-row .muted { text-align: right; }
+  #plan-link { color: var(--text); text-decoration: none; min-height: 32px; }
+  #plan-link:hover { border-color: var(--info); }
+  #plan-link[aria-disabled="true"] { opacity: .45; pointer-events: none; }
+  .log { font-family: Consolas, Menlo, monospace; font-size: 12px; color: var(--muted); white-space: pre-wrap; max-height: 140px; overflow: auto; margin-top: 6px; }
+  details > summary { cursor: pointer; color: var(--muted); font-size: 14px; }
   .keys { font-size: 13px; color: var(--muted); }
   kbd { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
   .flash .t { font-size: 22vw; line-height: 1; } .flash .s { font-size: 4vw; }
-  @media (max-width: 900px) { main, .charts { grid-template-columns: 1fr; } }
+
+  @media (max-width: 1000px), (max-height: 600px) {   /* small screens: stack and let the page scroll */
+    html, body { height: auto; }
+    main { grid-template-columns: 1fr; }
+    .left { grid-template-rows: auto auto; } .stage { min-height: 320px; }
+    .right { overflow: visible; }
+  }
 </style>
 </head>
 <body>
 <header>
   <h1>CSI Dataset Recorder</h1>
-  <span class="chip" id="session">–</span>
-  <span class="chip" id="datadir" title="โฟลเดอร์ที่เก็บ dataset">–</span>
+  <span class="chip" id="round" title="รอบปัจจุบัน (ห้อง · อาสาสมัคร)">–</span>
   <span class="chip" id="link"><span class="dot"></span><span>–</span></span>
+  <span class="chip" id="chan" title="ช่อง Wi-Fi ที่ Tx ส่ง และที่ Rx รับอยู่จริง">ช่อง –</span>
   <span class="chip" id="conn">กำลังเชื่อมต่อ…</span>
+  <a class="chip" id="plan-link" href="/plan" title="เพิ่มห้อง ท่า หรือขั้นนอกแผน PDF และปรับเวลา">แก้แผน</a>
+  <span class="chip" id="session">–</span>
+  <span class="chip" id="datadir">–</span>
   <span class="grow"></span>
-  <span class="muted">มือถือเปิด</span> <span class="phone" id="phone">–</span>
-  <img id="qr" src="/api/qr.svg" alt="QR สำหรับมือถือ" title="กดเพื่อขยาย" hidden onload="this.hidden = false">
+  <span class="muted">มือถือ</span> <span class="phone" id="phone">–</span>
+  <img id="qr" src="/api/qr.svg" alt="QR สำหรับเปิดรีโมตบนมือถือ (กดเพื่อขยาย)" title="กดเพื่อขยาย" hidden onload="this.hidden = false">
 </header>
 
 <main>
-  <section class="panel stage" id="stage">
-    <div class="rec-dot">● REC</div>
-    <div class="phase" id="phase">–</div>
-    <div class="title" id="title">–</div>
-    <div class="big" id="big"></div>
-    <div class="sub" id="sub"></div>
-    <div class="timeline" id="tl" hidden><div class="fill"></div><div class="cue"></div></div>
-    <div class="banner" id="banner" style="margin-top:14px"></div>
-  </section>
+  <div class="left">
+    <section class="panel stage" id="stage" role="status" aria-live="polite">
+      <div class="stage-top"><span><span class="chip" id="take-chip" hidden></span></span>
+        <span class="phase" id="phase">–</span><span class="rec-dot">● REC</span></div>
+      <div class="title" id="title">–</div>
+      <div class="big num" id="big"></div>
+      <div class="sub" id="sub"></div>
+      <div class="desc" id="desc"></div>
+      <div class="timeline" id="tl" hidden><div class="fill"></div><div class="cue"></div></div>
+      <div class="tl-labels" id="tl-labels" hidden></div>
+      <div class="banner" id="banner" role="alert"></div>
+    </section>
 
-  <aside class="side">
+    <section class="panel charts">
+      <div class="chart-head"><span id="wf-title">CSI amplitude — 52 subcarriers (บน −26 → ล่าง +26)</span>
+        <span><span id="wf-scale"></span> · <button class="btn-ghost" id="wf-mode" title="สลับโหมดกราฟ" style="padding:0 8px;font-size:13px"><kbd>M</kbd> <span id="wf-mode-t"></span></button></span></div>
+      <canvas id="wf" aria-label="กราฟ CSI amplitude"></canvas>
+      <div class="chart-head"><span>การเคลื่อนไหว (std 0.5 s)</span><span>แถบเขียว = ช่วงบันทึก · เส้นแดง = สัญญาณทำท่า</span></div>
+      <canvas id="mo" aria-label="กราฟการเคลื่อนไหว"></canvas>
+    </section>
+  </div>
+
+  <aside class="right">
     <div class="panel">
       <div class="tiles">
         <div class="tile"><div class="k">อัตรา (1 s)</div><div class="v" id="t-rate">–</div></div>
-        <div class="tile"><div class="k">RSSI</div><div class="v" id="t-rssi">–</div></div>
         <div class="tile"><div class="k">เฟรมหาย (5 s)</div><div class="v" id="t-loss">–</div></div>
+        <div class="tile"><div class="k">RSSI</div><div class="v" id="t-rssi">–</div></div>
         <div class="tile"><div class="k">ช่วงขาดนานสุด</div><div class="v" id="t-gap">–</div></div>
         <div class="tile"><div class="k">การเคลื่อนไหว</div><div class="v" id="t-motion">–</div></div>
         <div class="tile"><div class="k">serial หาย / ck</div><div class="v" id="t-uart">–</div></div>
       </div>
-      <div class="kv muted" style="margin-top:8px" id="device"></div>
+      <div class="kv muted device" id="device"></div>
     </div>
-    <div class="panel result" id="result"><span class="muted">ยังไม่มีเทค</span></div>
-    <div class="panel"><div class="log" id="log"></div></div>
+
+    <div class="panel result" id="result"><span class="muted">ยังไม่มีการบันทึก</span></div>
+
+    <section class="panel plan" aria-labelledby="pv">
+      <div class="sec-title"><b id="pv">แผนรอบ –</b><span class="keys"><kbd>K</kbd> เก็บ <kbd>R</kbd> ใหม่ <kbd>D</kbd> ทิ้ง <kbd>Esc</kbd> หยุด</span></div>
+      <div class="totals" id="pv-sum"></div>
+      <div class="warnbox" id="bl-warn" hidden></div>
+      <ol class="plan-list" id="progress"></ol>
+    </section>
+
+    <section class="panel" aria-labelledby="ov-h">
+      <div class="sec-title"><b id="ov-h">ทั้ง dataset</b><span class="muted">นับเฉพาะครั้งที่ใช้กับโมเดล</span></div>
+      <div class="totals" id="ov-total"></div>
+      <div class="rooms" id="overview"></div>
+      <div class="room out" id="outside" hidden></div>
+    </section>
+
+    <details class="panel"><summary>บันทึกการทำงาน</summary><div class="log" id="log"></div></details>
   </aside>
 </main>
-
-<section class="charts">
-  <div class="panel">
-    <div class="chart-head"><span id="wf-title">CSI amplitude — 52 subcarriers (บน −26 → ล่าง +26)</span><span><span id="wf-scale"></span> · <span id="wf-mode" style="cursor:pointer" title="สลับโหมดกราฟ"><kbd>M</kbd> <span id="wf-mode-t"></span></span></span></div>
-    <canvas id="wf"></canvas>
-    <div class="chart-head" style="margin-top:8px"><span>การเคลื่อนไหว (std 0.5 s)</span><span class="muted">▮ เขียว = ช่วงบันทึก, เส้นแดง = สัญญาณทำท่า</span></div>
-    <canvas id="mo"></canvas>
-  </div>
-  <div class="panel">
-    <div class="chart-head"><span>ความคืบหน้า: <b id="pv">–</b></span><span class="keys">
-      <kbd>K</kbd> เก็บ <kbd>R</kbd> บันทึกใหม่ <kbd>D</kbd> ทิ้ง <kbd>Esc</kbd> หยุด</span></div>
-    <table id="progress"></table>
-  </div>
-</section>
 
 <div class="flash" id="flash"><div class="t" id="flash-t"></div><div class="s" id="flash-s"></div></div>
 <div class="overlay" id="qr-box" hidden>
@@ -181,45 +268,60 @@ function render(st) {
   setTile("#t-motion", L.motion, 2, "", "");
   $("#t-uart").textContent = `${L.uart_lost} / ${L.checksum_errors}`;
   const d = st.device;
-  $("#device").innerHTML = d.rx_mac ? `<span>Rx</span><span>${esc(d.rx_mac)}</span><span>Tx</span><span>${esc(d.tx_ssid)} · ch ${esc(d.ch)}</span>` : "";
+  // Tx channel: the access point the Rx paired with (#INFO ch). Rx channel: what the CSI frames arrive on.
+  const txCh = d.ch ?? null, rxCh = L.rx_ch ?? null;
+  const same = txCh === null || rxCh === null || String(txCh) === String(rxCh);
+  const chip = $("#chan");
+  chip.textContent = rxCh === null && txCh === null ? "ช่อง –"
+    : same ? `ช่อง ${rxCh ?? txCh}` : `ช่องไม่ตรง: Tx ${txCh} / Rx ${rxCh}`;
+  chip.className = "chip" + (same ? "" : " s-warn");
+  const rows = [];
+  if (d.tx_ssid || txCh !== null) rows.push(`<span>Tx</span><span>${esc(d.tx_ssid || "–")} · ช่อง <b>${esc(txCh ?? "–")}</b></span>`);
+  if (d.rx_mac || rxCh !== null) rows.push(`<span>Rx</span><span>${esc(d.rx_mac || "–")} · รับอยู่ช่อง <b class="${same ? "" : "s-warn"}">${esc(rxCh ?? "–")}</b>${same ? "" : " — ไม่ตรงกับ Tx"}</span>`);
+  setHtml($("#device"), rows.join(""));
 
   // stage
   const stage = $("#stage");
   stage.className = "panel stage ph-" + st.phase;
-  const tk = st.take;
-  let phase = PHASE_TH[st.phase] || st.phase, title = "", big = "", sub = "";
+  const idle = st.phase === "idle";
+  $("#plan-link").setAttribute("aria-disabled", String(!idle));
+  $("#plan-link").title = idle ? "เพิ่มห้อง ท่า หรือขั้นนอกแผน PDF และปรับเวลา" : "หยุดบันทึกก่อนแก้แผน";
+  const tk = st.take, b = st.batch;
+  const rd = b || st.round;
+  $("#round").textContent = rd ? `ห้อง ${rd.room.toUpperCase()} · ${rd.volunteer}` : "ยังไม่เริ่มรอบ";
+  $("#take-chip").hidden = !b;
+  if (b) $("#take-chip").textContent = `${b.step_name} · ครั้ง ${Math.min(b.done + 1, b.reps)}/${b.reps}`;
+  let phase = PHASE_TH[st.phase] || st.phase, title = "", big = "", sub = "", desc = "";
   const tl = $("#tl");
   tl.hidden = !(tk && (st.phase === "countdown" || st.phase === "recording"));
+  $("#tl-labels").hidden = tl.hidden || !tk.cue_at;
   if (st.phase === "idle") {
     title = "พร้อมบันทึก";
-    sub = "เลือกท่าบนมือถือแล้วกดเริ่ม";
+    sub = "เลือกห้อง อาสาสมัคร และขั้นในแผนบนมือถือ แล้วกดเริ่ม";
   } else if (st.phase === "countdown") {
     title = tk.name; big = Math.max(0, Math.ceil(tk.t_start - now));
-    sub = `เทค ${tk.rep}/${tk.reps} · ${tk.volunteer} · ${tk.position} — เข้าที่ อยู่นิ่ง`;
+    sub = `ครั้ง ${tk.rep}/${tk.reps} · ห้อง ${tk.room.toUpperCase()} · ${tk.volunteer} — เข้าที่ ยืนนิ่ง`;
+    desc = tk.desc;
   } else if (st.phase === "recording") {
     title = tk.name;
-    if (tk.cue_at && now < tk.cue_at) { big = Math.ceil(tk.cue_at - now); sub = `อยู่นิ่ง… ${tk.cue_text.replace("!", "")}ในอีก ${big} วินาที`; }
-    else if (tk.cue_at && now < tk.cue_at + 1.5) { big = tk.cue_text; sub = "ทำท่าเลย"; }
-    else { big = Math.max(0, Math.ceil(tk.t_end - now)); sub = tk.cue_at ? "อยู่ในท่าสุดท้าย นิ่งไว้จนจบ" : "อยู่นิ่ง… จนจบ"; }
+    if (tk.cue_at && now < tk.cue_at) { big = Math.ceil(tk.cue_at - now); sub = `ยืนนิ่ง… ทำท่าเมื่อได้ยินสัญญาณ (อีก ${big} วินาที)`; desc = tk.desc; }
+    else if (tk.cue_at && now < tk.cue_at + 1.5) { big = tk.cue_text; sub = "ทำท่าเลย"; desc = tk.desc; }
+    else { big = Math.max(0, Math.ceil(tk.t_end - now)); sub = tk.cue_at ? "ค้างท่าสุดท้าย นิ่งไว้จนจบ" : tk.desc; }
     const frac = Math.min(1, Math.max(0, (now - tk.t_start) / (tk.t_end - tk.t_start)));
     tl.querySelector(".fill").style.width = (frac * 100) + "%";
   } else if (st.phase === "review") {
     const r = st.last_result;
-    title = r.verdict === "pass" ? "ผ่าน" : "ไม่ผ่าน";
+    title = r.verdict !== "pass" ? "ไม่ผ่าน" : r.warnings?.length ? "ผ่าน (มีคำเตือน)" : "ผ่าน";
     big = ""; sub = "เลือกบนมือถือ: เก็บ / บันทึกใหม่ / ทิ้ง  (หรือกด K / R / D)";
   } else if (st.phase === "rest") {
     const b = st.batch;
-    title = "พัก"; big = Math.max(0, Math.ceil(st.phase_end - now));
-    sub = `ถัดไป: ${activityById(b.activity).name} เทค ${b.done + 1}/${b.reps}`;
+    title = "พัก กลับสู่ท่าเริ่มต้น"; big = Math.max(0, Math.ceil(st.phase_end - now));
+    sub = `ถัดไป: ${b.step_name} ครั้ง ${b.done + 1}/${b.reps}`;
   }
-  if (tk && !tl.hidden) {
-    const cueEl = tl.querySelector(".cue");
-    cueEl.hidden = !tk.cue_at;
-    if (tk.cue_at) cueEl.style.left = ((tk.cue_at - tk.t_start) / (tk.t_end - tk.t_start) * 100) + "%";
-    if (st.phase === "countdown") tl.querySelector(".fill").style.width = "0%";
-  }
+  if (tk && !tl.hidden) drawTimeline(tl, tk, st.phase);
   $("#phase").textContent = phase;
   $("#title").textContent = title;
+  $("#desc").textContent = desc;
   $("#big").textContent = big;
   $("#big").style.color = st.phase === "recording" && tk.cue_at && now >= tk.cue_at && now < tk.cue_at + 1.5 ? "var(--bad)" : "";
   $("#sub").textContent = sub;
@@ -232,6 +334,34 @@ function render(st) {
   renderResult(st.last_result);
   $("#log").textContent = st.log.join("\n");
   renderProgress(st);
+}
+
+// The take as in the plan: still until the cue, about 3 s for the movement, then hold the last pose.
+const ACTION_S = 3;
+function drawTimeline(tl, tk, phase) {
+  if (tl.dataset.seq !== String(tk.seq)) {
+    tl.dataset.seq = tk.seq;
+    const D = tk.t_end - tk.t_start, pct = (s) => Math.min(100, s / D * 100);
+    const segs = [];
+    if (tk.cue_at) {
+      const c = tk.cue_at - tk.t_start, e = Math.min(D, c + ACTION_S);
+      segs.push([0, c, "var(--info)", "ยืนนิ่ง"], [c, e, "var(--bad)", "ทำท่า"], [e, D, "var(--ok)", "ค้างท่า"]);
+    } else segs.push([0, D, "var(--info)", ""]);
+    tl.querySelectorAll(".seg").forEach((x) => x.remove());
+    for (const [a, b, col] of segs) {
+      const el = document.createElement("div");
+      el.className = "seg";
+      el.style.cssText = `left:${pct(a)}%;width:${pct(b) - pct(a)}%;background:${col}`;
+      tl.prepend(el);
+    }
+    const f = (s) => Number.isInteger(s) ? s : s.toFixed(1);
+    $("#tl-labels").innerHTML = segs.filter((s) => s[3] && s[1] > s[0]).map(([a, b, , t]) =>
+      `<span style="left:${(pct(a) + pct(b)) / 2}%">${t} ${f(a)}–${f(b)} s</span>`).join("");
+    const cueEl = tl.querySelector(".cue");
+    cueEl.hidden = !tk.cue_at;
+    if (tk.cue_at) cueEl.style.left = pct(tk.cue_at - tk.t_start) + "%";
+  }
+  if (phase === "countdown") tl.querySelector(".fill").style.width = "0%";
 }
 
 function setTile(sel, v, d, unit, cls) {
@@ -248,9 +378,10 @@ function renderResult(r) {
     <div style="display:flex;justify-content:space-between;align-items:baseline">
       <span class="verdict ${r.verdict === "pass" ? "s-ok" : "s-bad"}">${r.verdict === "pass" ? "ผ่าน" : "ไม่ผ่าน"}</span>
       <span class="chip">${esc(st)}</span></div>
-    <div class="muted">${esc(r.take_id)} · เทค ${r.rep}/${r.reps}</div>
+    <div class="muted">${esc(r.take_id)} · ครั้ง ${r.rep}/${r.reps}</div>
     <div class="kv" style="margin-top:6px">
-      <span>อัตรา</span><span>${fmt(r.rate_hz, 1, " Hz")} (${r.frames} เฟรม)</span>
+      <span>ตัวอย่าง</span><span>${r.frames}/${r.frames_expected} (${fmt(r.rate_hz, 1, " Hz")})</span>
+      <span>ท่า (ประมาณจาก CSI)</span><span>${r.action_start_s === null || r.action_start_s === undefined ? "–" : `${fmt(r.action_start_s, 1)}–${fmt(r.action_end_s, 1)} s`}</span>
       <span>เฟรมหาย</span><span>${fmt(r.air_loss_pct, 2, " %")}</span>
       <span>ขาดนานสุด</span><span>${fmt(r.gap_max_ms, 0, " ms")}</span>
       <span>RSSI</span><span>${fmt(r.rssi_median, 0, " dBm")}</span>
@@ -260,17 +391,89 @@ function renderResult(r) {
       ? `<ul>${(r.reasons || []).map((x) => `<li class="s-bad">${esc(x)}</li>`).join("")}${(r.warnings || []).map((x) => `<li class="s-warn">${esc(x)}</li>`).join("")}</ul>` : ""}`;
 }
 
+function setHtml(el, html) { if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; } }
+// rows of label | bar | n/target for {all, fall, normal}
+function totalsHtml(T) {
+  const row = (lab, [n, t], cls) =>
+    `<span>${lab}</span><div class="bar ${n >= t ? "done" : cls}"><i style="width:${t ? n / t * 100 : 0}%"></i></div><b>${n}/${t}</b>`;
+  return row("ทั้งหมด", T.all, "") + row("ล้ม", T.fall, "fall") + row("ปกติ", T.normal, "");
+}
+
 function renderProgress(st) {
-  const v = st.batch?.volunteer || st.last_result?.volunteer || st.volunteers[0] || "–";
-  const showV = v === "none" ? (st.volunteers[0] || "none") : v;
-  $("#pv").textContent = showV;
-  const c = st.counts[showV] || {}, none = st.counts["none"] || {};
-  $("#progress").innerHTML = App.cfg.activities.map((a) => {
-    const n = (a.no_volunteer ? none : c)[a.id] || 0, pct = Math.min(100, n / a.target * 100);
-    return `<tr><td>${esc(a.name)}</td><td><span class="tag ${a.label}">${a.label}</span></td>
-      <td style="text-align:right;font-variant-numeric:tabular-nums">${n}/${a.target}</td>
-      <td style="width:35%"><div class="bar ${n >= a.target ? "done" : ""}"><i style="width:${pct}%"></i></div></td></tr>`;
-  }).join("");
+  const rd = st.batch || st.round || { room: App.cfg.rooms[0].id, volunteer: App.cfg.rooms[0].volunteers[0] || "" };
+  const room = roomById(rd.room) || App.cfg.rooms[0], v = rd.volunteer;
+  const c = roundCounts(st, room.id, v);
+  $("#pv").textContent = `แผนรอบ ${room.id.toUpperCase()} · ${v || "–"}`;
+  setHtml($("#pv-sum"), totalsHtml(roundTotals(c)));
+  const bw = $("#bl-warn");
+  bw.hidden = !v || hasBaseline(st, room.id, v);
+  bw.textContent = "ยังไม่มี baseline (ห้องว่าง) ของรอบนี้ — ทำขั้นที่ 1 ก่อน";
+
+  // the step being recorded, or else the next one with takes left
+  const running = st.batch && st.batch.step !== null && st.batch.step !== undefined;
+  const now = running ? st.batch.step : App.cfg.steps.findIndex((s) => !stepHidden(s) && stepLeft(s, c) > 0);
+  let firstExtra = true;
+  setHtml($("#progress"), App.cfg.steps.map((s, i) => {
+    if (stepHidden(s)) return "";
+    const head = s.extra && firstExtra ? '<li class="xtra-h">นอกแผน (ไม่นับรวมเป้า)</li>' : "";
+    if (s.extra) firstExtra = false;
+    const left = stepLeft(s, c), n = s.reps - left, [tc, tt] = stepTag(s);
+    const cls = [left ? "" : "done", i === now ? "now" : ""].join(" ");
+    return `${head}<li class="ps ${cls}" title="${esc(stepDesc(s))}">
+      <span class="no">${left ? i + 1 : CHECK_SVG}</span>
+      <span class="name">${esc(s.name)}${i === now ? `<span class="now-tag">${running ? "กำลังทำ" : "ถัดไป"}</span>` : ""}</span>
+      <span class="tag ${tc}">${tt}</span>
+      <span class="cnt">${n}/${s.reps}</span>
+      <div class="bar ${left ? "" : "done"}"><i style="width:${n / s.reps * 100}%"></i></div></li>` +
+      (s.break_min ? `<li class="brk">พัก ${s.break_min} นาที</li>` : "");
+  }).join(""));
+
+  // whole dataset: a card per room with each volunteer's round
+  const all = { fall: [0, 0], normal: [0, 0], all: [0, 0] };
+  setHtml($("#overview"), App.cfg.rooms.filter((r) => !r.extra).map((r) => {
+    const sum = { fall: [0, 0], normal: [0, 0], all: [0, 0] };
+    const vols = r.volunteers.map((pv) => {
+      const t = roundTotals(roundCounts(st, r.id, pv));
+      for (const k in sum) { sum[k][0] += t[k][0]; sum[k][1] += t[k][1]; }
+      const cur = r.id === room.id && pv === v, full = t.all[0] >= t.all[1];
+      return `<div class="vol ${cur ? "cur" : ""} ${full ? "full" : ""}" title="${esc(pv)}: ${t.all[0]}/${t.all[1]} ครั้ง">
+        <b>${esc(pv)}</b> <span class="num">${t.all[0]}/${t.all[1]}</span>
+        <div class="bar ${full ? "done" : ""}"><i style="width:${t.all[1] ? t.all[0] / t.all[1] * 100 : 0}%"></i></div></div>`;
+    }).join("");
+    for (const k in all) { all[k][0] += sum[k][0]; all[k][1] += sum[k][1]; }
+    const [n, t] = sum.all;
+    return `<div class="room ${r.id === room.id ? "cur" : ""}">
+      <div class="room-h"><b>${esc(r.name)}${r.test_only ? ' <span class="tag test">ทดสอบเท่านั้น</span>' : ""}</b>
+        <div class="bar ${n >= t ? "done" : ""}"><i style="width:${t ? n / t * 100 : 0}%"></i></div>
+        <span class="n">${n}/${t}<small>ล้ม ${sum.fall[0]}/${sum.fall[1]} · ปกติ ${sum.normal[0]}/${sum.normal[1]}</small></span></div>
+      <div class="vols">${vols}</div></div>`;
+  }).join(""));
+  setHtml($("#ov-total"), totalsHtml(all));
+
+  // outside the PDF plan: every take in an extra room, and takes beyond a PDF target
+  const out = {};
+  for (const [r, vols] of Object.entries(st.counts)) {
+    const ro = roomById(r);
+    for (const acts of Object.values(vols)) {
+      for (const [a, n] of Object.entries(acts)) {
+        const act = activityById(a);
+        const x = !ro || ro.extra ? n : Math.max(0, n - (act ? act.target : 0));
+        if (!x) continue;
+        const o = out[r] || (out[r] = { n: 0, acts: {} });
+        o.n += x;
+        o.acts[a] = (o.acts[a] || 0) + x;
+      }
+    }
+  }
+  const rows = Object.entries(out).map(([r, o]) => {
+    const ro = roomById(r);
+    const parts = Object.entries(o.acts).map(([a, n]) => `${esc(activityById(a)?.name || a)} ${n}`).join(" · ");
+    return `<div class="out-row"><b>${esc(ro ? ro.name : r)}</b><span class="muted">${parts}</span><b class="num">${o.n}</b></div>`;
+  });
+  const outTotal = Object.values(out).reduce((sum, o) => sum + o.n, 0);
+  $("#outside").hidden = !rows.length;
+  setHtml($("#outside"), `<div class="room-h"><b>นอกแผน</b><span></span>
+    <span class="n">${outTotal} ครั้ง<small>ไม่นับรวมเป้า 780</small></span></div>${rows.join("")}`);
 }
 
 // ------------------------------------------------------------------ charts
@@ -386,7 +589,9 @@ function flashError(msg) {
 (async () => {
   await loadConfig();
   $("#session").textContent = `${App.cfg.session} · ${App.cfg.location}`;
-  $("#datadir").textContent = "📁 " + App.cfg.data_dir;
+  const parts = App.cfg.data_dir.split(/[\\/]/).filter(Boolean);
+  $("#datadir").textContent = "เก็บที่ …/" + parts.slice(-2).join("/");
+  $("#datadir").title = "โฟลเดอร์ที่เก็บ dataset: " + App.cfg.data_dir;
   $("#phone").textContent = (App.cfg.remote_urls[0] || "(ไม่มีเครือข่าย)") + (App.cfg.pin_required ? "  (ต้องใส่ PIN)" : "");
   $("#qr-url").textContent = App.cfg.remote_urls[0] || "";
   $("#qr").onclick = () => { $("#qr-box").hidden = false; };

@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>แก้แผนเก็บข้อมูล</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { max-width: 1100px; margin: 0 auto; padding: 12px 16px 40px; }
+  header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; position: sticky; top: 0; z-index: 5;
+    background: var(--bg); padding: 8px 0; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 20px; margin: 0; }
+  header .grow { flex: 1; }
+  header a.back { color: var(--info); text-decoration: none; min-height: 44px; display: inline-flex; align-items: center; }
+  .btn { min-height: 44px; padding: 0 16px; font-weight: 700; }
+  #dirty { color: var(--warn); font-size: 14px; }
+  .msg { margin-top: 12px; padding: 10px 14px; border-radius: 10px; }
+  .msg.bad { border: 1px solid var(--bad); color: var(--bad); }
+  .msg.ok { border: 1px solid var(--ok); color: var(--ok); }
+  .lead { color: var(--muted); margin: 12px 0 0; font-size: 15px; }
+  section.panel { margin-top: 14px; }
+  .sec-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .sec-h h2 { font-size: 18px; margin: 0; }
+  .sec-h .muted { font-size: 14px; }
+  .row { display: grid; gap: 10px; align-items: center; padding: 8px 6px; border-bottom: 1px solid var(--line); font-size: 15px; }
+  .row:last-child { border-bottom: 0; }
+  .row.pdf { color: var(--muted); }
+  .row.pdf b { color: var(--text); }
+  .row.is-hidden { opacity: .55; }
+  .rooms .row { grid-template-columns: 56px minmax(0, 1.2fr) minmax(0, 1.4fr) auto auto; }
+  .acts .row { grid-template-columns: minmax(0, 1.6fr) auto minmax(0, 2.4fr) auto auto; }
+  .steps .row { grid-template-columns: 40px minmax(0, 2fr) auto auto auto; }
+  .id { font-family: Consolas, Menlo, monospace; font-size: 14px; }
+  .tags { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tag.extra { color: var(--info); }
+  .acts-btn { display: flex; gap: 6px; justify-content: flex-end; }
+  .acts-btn button { min-height: 40px; min-width: 44px; padding: 0 10px; font-size: 14px; }
+  .times { display: flex; gap: 10px; flex-wrap: wrap; font-size: 14px; }
+  .times label { display: inline-flex; align-items: center; gap: 4px; }
+  .times input { width: 66px; min-height: 36px; padding: 4px 6px; text-align: right; }
+  .add { margin-top: 10px; min-height: 44px; padding: 0 14px; }
+  .pdf-steps { font-size: 14px; color: var(--muted); padding: 6px; }
+
+  /* add / edit form */
+  .form { border-color: var(--info); }
+  .form h3 { margin: 0 0 10px; font-size: 18px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 14px; }
+  .field { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+  .field.wide { grid-column: 1 / -1; }
+  .field .hint { color: var(--muted); font-size: 12px; }
+  .check { flex-direction: row; align-items: center; gap: 8px; min-height: 44px; }
+  .check input { width: 22px; height: 22px; min-height: 0; }
+  .form-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .lock { margin-top: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">← หน้าจอหลัก</a>
+  <h1>แก้แผนเก็บข้อมูล</h1>
+  <span class="grow"></span>
+  <span id="dirty" hidden>ยังไม่ได้บันทึก</span>
+  <button class="btn btn-ghost" id="reset">กลับไปใช้แผน PDF</button>
+  <button class="btn btn-ok" id="save">บันทึกแผน</button>
+</header>
+
+<p class="lead">แผน PDF (ห้อง A B C, 9 ขั้น, 65 ครั้งต่อรอบ) ล็อกไว้ — ส่วนที่เพิ่มที่นี่นับแยกเป็น "นอกแผน" ไม่นับรวมเป้า 780
+  · เก็บที่ <span class="id" id="where">–</span></p>
+<div class="warnbox lock" id="lock" hidden>กำลังบันทึกข้อมูลอยู่ — แก้แผนได้เมื่อหยุดบันทึก</div>
+<div class="msg" id="msg" role="status" hidden></div>
+
+<section class="panel form" id="form" hidden aria-labelledby="form-h"></section>
+
+<section class="panel rooms">
+  <div class="sec-h"><h2>ห้องน้ำ</h2><span class="muted">ห้องที่เพิ่มใช้ลำดับขั้นเดียวกับแผน แต่ยอดทั้งหมดนับเป็นนอกแผน</span></div>
+  <div id="rooms"></div>
+  <button class="btn-ghost add" data-add="room">+ เพิ่มห้อง</button>
+</section>
+
+<section class="panel acts">
+  <div class="sec-h"><h2>ท่า</h2><span class="muted">ท่าในแผน PDF ปรับได้เฉพาะเวลานับถอยหลัง สัญญาณ และพัก (บันทึก 10 s ล็อกไว้)</span></div>
+  <div id="acts"></div>
+  <button class="btn-ghost add" data-add="activity">+ เพิ่มท่า</button>
+</section>
+
+<section class="panel steps">
+  <div class="sec-h"><h2>ลำดับในรอบ</h2><span class="muted">ขั้นที่เพิ่มต่อท้ายแผน ใช้ได้กับทุกห้อง</span></div>
+  <div id="steps"></div>
+  <button class="btn-ghost add" data-add="step">+ เพิ่มขั้น</button>
+</section>
+
+<script src="/common.js"></script>
+<script>
+"use strict";
+let X = null;          // the extra being edited: {rooms, activities, steps, timing}
+let savedJson = "";    // X as last saved, to know if there are unsaved edits
+let used = { rooms: {}, activities: {} };
+let editing = null;    // {kind, index} of the open form; index -1 = new
+let idle = true;
+const ID_OK = /^[a-z0-9_]+$/;
+const pdfRooms = () => App.cfg.rooms.filter((r) => !r.extra);
+const pdfActs = () => App.cfg.activities.filter((a) => !a.extra);
+const pdfSteps = () => App.cfg.steps.filter((s) => !s.extra);
+
+async function loadAll() {
+  await loadConfig();
+  const r = await fetch("/api/plan", { cache: "no-store" });
+  const info = await r.json();
+  const e = info.extra || {};
+  X = { rooms: e.rooms || [], activities: e.activities || [], steps: e.steps || [], timing: e.timing || {} };
+  savedJson = JSON.stringify(X);
+  used = info.used;
+  $("#where").textContent = App.cfg.data_dir.replace(/[\\/][^\\/]*$/, "") + "/plan-extra.json";
+  render();
+}
+
+function say(text, ok) {
+  const m = $("#msg");
+  m.hidden = !text;
+  m.className = "msg " + (ok ? "ok" : "bad");
+  m.textContent = text || "";
+}
+function markDirty() { $("#dirty").hidden = JSON.stringify(X) === savedJson; }
+function btn(label, attrs, disabled, title) {
+  return `<button class="btn-ghost" ${attrs} ${disabled ? "disabled" : ""} ${title ? `title="${esc(title)}"` : ""}>${label}</button>`;
+}
+
+// ------------------------------------------------------------------ lists
+function render() {
+  const nUsed = (kind, id) => used[kind][id] || 0;
+
+  $("#rooms").innerHTML = pdfRooms().map((r) => `<div class="row pdf">
+      <span class="id">${esc(r.id)}</span><b>${esc(r.name)}</b><span>${esc(r.volunteers.join(", "))}</span>
+      <span class="tags"><span class="tag none">แผน PDF</span>${r.test_only ? '<span class="tag test">ทดสอบเท่านั้น</span>' : ""}</span><span></span></div>`).join("") +
+    X.rooms.map((r, i) => `<div class="row ${r.hidden ? "is-hidden" : ""}">
+      <span class="id">${esc(r.id)}</span><b>${esc(r.name || r.id.toUpperCase())}</b><span>${esc((r.volunteers || []).join(", "))}</span>
+      <span class="tags"><span class="tag extra">นอกแผน</span>${r.test_only ? '<span class="tag test">ทดสอบเท่านั้น</span>' : ""}${r.hidden ? '<span class="tag none">ซ่อน</span>' : ""}</span>
+      <span class="acts-btn">${btn("แก้", `data-edit="room" data-i="${i}"`)}
+        ${btn(r.hidden ? "แสดง" : "ซ่อน", `data-hide="rooms" data-i="${i}"`)}
+        ${btn("ลบ", `data-del="rooms" data-i="${i}"`, nUsed("rooms", r.id), `มีข้อมูล ${nUsed("rooms", r.id)} ครั้ง — ให้ซ่อนแทน`)}</span></div>`).join("");
+
+  $("#acts").innerHTML = pdfActs().map((a) => {
+    const t = X.timing[a.id] || {};
+    const inp = (k, lab) => `<label>${lab} <input type="number" min="0" step="0.5" data-time="${esc(a.id)}" data-k="${k}"
+      value="${t[k] ?? a[k]}" aria-label="${esc(a.name)}: ${lab} (วินาที)"> s</label>`;
+    return `<div class="row pdf"><b>${esc(a.name)}</b><span class="tag ${stepTagOf(a)[0]}">${stepTagOf(a)[1]}</span>
+      <span class="times"><span>บันทึก ${a.duration_s} s</span>${inp("countdown_s", "นับ")}${a.cue_s || "cue_s" in t ? inp("cue_s", "สัญญาณ") : ""}${inp("rest_s", "พัก")}</span>
+      <span class="tags"><span class="tag none">แผน PDF</span></span><span></span></div>`;
+  }).join("") + X.activities.map((a, i) => {
+    const inUse = X.steps.some((s) => [].concat(s.activity).includes(a.id));
+    return `<div class="row ${a.hidden ? "is-hidden" : ""}"><b>${esc(a.name || a.id)}</b><span class="tag ${tagOf(a)[0]}">${tagOf(a)[1]}</span>
+      <span class="times">บันทึก ${a.duration_s ?? 10} s · นับ ${a.countdown_s ?? 5} · สัญญาณ ${a.cue_s ?? 3} · พัก ${a.rest_s ?? 15}</span>
+      <span class="tags"><span class="tag extra">นอกแผน</span>${a.hidden ? '<span class="tag none">ซ่อน</span>' : ""}</span>
+      <span class="acts-btn">${btn("แก้", `data-edit="activity" data-i="${i}"`)}
+        ${btn(a.hidden ? "แสดง" : "ซ่อน", `data-hide="activities" data-i="${i}"`)}
+        ${btn("ลบ", `data-del="activities" data-i="${i}"`, nUsed("activities", a.id) || inUse,
+          nUsed("activities", a.id) ? `มีข้อมูล ${nUsed("activities", a.id)} ครั้ง — ให้ซ่อนแทน` : inUse ? "ลบขั้นที่ใช้ท่านี้ก่อน" : "")}</span></div>`;
+  }).join("");
+
+  $("#steps").innerHTML = `<div class="pdf-steps">ขั้น 1–${pdfSteps().length} ตามแผน PDF (ล็อก): ${pdfSteps().map((s) => esc(s.name)).join(" · ")}</div>` +
+    X.steps.map((s, i) => `<div class="row"><span class="id">${pdfSteps().length + i + 1}</span>
+      <b>${esc(s.name || actName([].concat(s.activity)[0]))}</b>
+      <span>${esc(actName([].concat(s.activity)[0]))} ×${s.reps}${s.break_min ? ` · พัก ${s.break_min} นาที` : ""}</span>
+      <span class="tags"><span class="tag extra">นอกแผน</span></span>
+      <span class="acts-btn">${btn("↑", `data-move="-1" data-i="${i}" aria-label="เลื่อนขึ้น"`, i === 0)}
+        ${btn("↓", `data-move="1" data-i="${i}" aria-label="เลื่อนลง"`, i === X.steps.length - 1)}
+        ${btn("แก้", `data-edit="step" data-i="${i}"`)}${btn("ลบ", `data-del="steps" data-i="${i}"`)}</span></div>`).join("");
+
+  markDirty();
+  $("#save").disabled = !idle;
+  $("#reset").disabled = !idle;
+  $("#lock").hidden = idle;
+}
+
+function tagOf(a) { return a.train === false ? ["none", "ไม่ใช้ฝึก"] : [a.label || "normal", a.label === "fall" ? "ล้ม" : "ปกติ"]; }
+function stepTagOf(a) { return !a.train ? ["none", "ไม่ใช้ฝึก"] : [a.label, { fall: "ล้ม", normal: "ปกติ", none: "ห้องว่าง" }[a.label]]; }
+function actName(id) { return (X.activities.find((a) => a.id === id) || activityById(id) || { name: id }).name || id; }
+
+// ------------------------------------------------------------------ forms
+const FIELDS = {
+  room: [
+    ["id", "รหัสห้อง", "text", "a-z 0-9 _ ใช้ในชื่อไฟล์ เช่น d"],
+    ["name", "ชื่อที่แสดง", "text", "เช่น ห้องน้ำ D"],
+    ["volunteers", "รหัสอาสาสมัคร", "list", "คั่นด้วย , เช่น p08, p09"],
+    ["use", "การใช้ข้อมูล", "text", "เช่น ทดสอบเพิ่มเติม"],
+    ["setup", "ขนาดห้องและการติดตั้ง", "wide", "เช่น กว้าง 1.8 ยาว 1.6 ม. · Tx-Rx 1.75 ม."],
+    ["test_only", "ทดสอบเท่านั้น ห้ามใช้ฝึก", "bool"],
+  ],
+  activity: [
+    ["id", "รหัสท่า", "text", "a-z 0-9 _ ใช้ในชื่อไฟล์ เช่น fall_back"],
+    ["name", "ชื่อที่แสดง / พูด", "text", "เช่น ล้มไปข้างหลัง"],
+    ["label", "ประเภท", "label"],
+    ["cue_text", "ข้อความใหญ่ตอนให้ทำท่า", "text", "เช่น ล้ม!"],
+    ["desc", "วิธีทำท่า", "wide", "แสดงบนจอคอมและมือถือ"],
+    ["duration_s", "ความยาวการบันทึก (s)", "num", "", 10],
+    ["countdown_s", "นับถอยหลัง (s)", "num", "", 5],
+    ["cue_s", "สัญญาณทำท่าที่วินาที (0 = ไม่มี)", "num", "", 3],
+    ["rest_s", "พักหลังแต่ละครั้ง (s)", "num", "", 15],
+    ["train", "ใช้ฝึกโมเดล", "bool", "", true],
+    ["expect_motion", "ต้องขยับหลังสัญญาณ (ใช้เช็กจังหวะ)", "bool", "", true],
+    ["ends_still", "จบท่าแล้วนิ่ง", "bool", "", true],
+  ],
+  step: [
+    ["activity", "ท่า", "act"],
+    ["reps", "จำนวนครั้ง", "num", "", 10],
+    ["name", "ชื่อขั้น (ไม่ใส่ก็ได้)", "text", "เช่น ล้มไปข้างหลัง ชุดที่ 1"],
+    ["break_min", "พักหลังขั้นนี้ (นาที)", "num", "", 0],
+  ],
+};
+const LIST = { room: "rooms", activity: "activities", step: "steps" };
+const TITLE = { room: "ห้อง", activity: "ท่า", step: "ขั้น" };
+
+function openForm(kind, i) {
+  editing = { kind, i };
+  const item = i >= 0 ? X[LIST[kind]][i] : {};
+  const lockId = i >= 0 && (used[LIST[kind]] || {})[item.id];
+  const acts = [...pdfActs(), ...X.activities].filter((a) => !a.hidden || a.id === item.activity);
+  const html = FIELDS[kind].map(([k, lab, type, hint, def]) => {
+    const v = item[k] ?? def ?? "";
+    const id = "f-" + k;
+    if (type === "bool") {
+      return `<label class="field check"><input type="checkbox" id="${id}" ${(item[k] ?? def ?? false) ? "checked" : ""}> ${lab}</label>`;
+    }
+    let input;
+    if (type === "label") input = `<select id="${id}"><option value="fall" ${v === "fall" ? "selected" : ""}>ล้ม (fall)</option><option value="normal" ${v !== "fall" ? "selected" : ""}>ปกติ (normal)</option></select>`;
+    else if (type === "act") input = `<select id="${id}">${acts.map((a) => `<option value="${esc(a.id)}" ${a.id === [].concat(v)[0] ? "selected" : ""}>${esc(a.name || a.id)}${a.extra === false ? " (แผน PDF)" : ""}</option>`).join("")}</select>`;
+    else if (type === "num") input = `<input id="${id}" type="number" min="0" step="${k === "reps" ? 1 : 0.5}" value="${esc(v)}">`;
+    else {
+      const val = type === "list" ? (item[k] || []).join(", ") : v;
+      input = `<input id="${id}" value="${esc(val)}" ${k === "id" && lockId ? "disabled" : ""} autocomplete="off">`;
+    }
+    return `<label class="field ${type === "wide" ? "wide" : ""}" for="${id}">${lab}${input}${hint ? `<span class="hint">${esc(hint)}${k === "id" && lockId ? " — มีข้อมูลแล้ว แก้รหัสไม่ได้" : ""}</span>` : ""}</label>`;
+  }).join("");
+  const f = $("#form");
+  f.innerHTML = `<h3 id="form-h">${i >= 0 ? "แก้" : "เพิ่ม"}${TITLE[kind]}นอกแผน</h3>
+    <div class="grid">${html}</div><div class="err" id="form-err"></div>
+    <div class="form-btns"><button class="btn btn-ghost" id="f-cancel">ยกเลิก</button><button class="btn btn-ok" id="f-ok">${i >= 0 ? "ตกลง" : "เพิ่ม"}</button></div>`;
+  f.hidden = false;
+  f.scrollIntoView({ block: "start", behavior: "smooth" });
+  const first = f.querySelector("input:not([disabled]), select");
+  if (first) first.focus();
+  $("#f-cancel").onclick = closeForm;
+  $("#f-ok").onclick = submitForm;
+}
+function closeForm() { $("#form").hidden = true; editing = null; }
+
+function submitForm() {
+  const { kind, i } = editing, list = X[LIST[kind]];
+  const old = i >= 0 ? list[i] : {};
+  const out = { ...old };
+  for (const [k, , type] of FIELDS[kind]) {
+    const el = $("#f-" + k);
+    if (type === "bool") out[k] = el.checked;
+    else if (type === "num") { if (el.value !== "") out[k] = Number(el.value); else delete out[k]; }
+    else if (type === "list") out[k] = el.value.split(",").map((x) => x.trim()).filter(Boolean);
+    else if (el.value.trim()) out[k] = el.value.trim(); else delete out[k];
+  }
+  if (kind === "step") out.reps = Math.round(out.reps || 0);
+  const err = (m) => { $("#form-err").textContent = m; };
+  if (kind !== "step") {
+    if (!out.id || !ID_OK.test(out.id)) return err("รหัสใช้ได้แค่ a-z 0-9 และ _");
+    const taken = [...(kind === "room" ? App.cfg.rooms.filter((r) => !r.extra) : pdfActs()), ...list.filter((_, k) => k !== i)];
+    if (taken.some((x) => x.id === out.id)) return err(`รหัส ${out.id} มีอยู่แล้ว ใช้รหัสอื่น`);
+  } else if (!out.reps || out.reps < 1) return err("จำนวนครั้งต้องเป็น 1 ขึ้นไป");
+  if (kind === "activity" && out.cue_s && out.cue_s >= out.duration_s) return err("วินาทีสัญญาณต้องน้อยกว่าความยาวการบันทึก");
+  if (kind === "activity" && i >= 0 && old.id !== out.id) {  // keep the steps pointing at it
+    for (const s of X.steps) if ([].concat(s.activity).includes(old.id)) s.activity = out.id;
+  }
+  if (i >= 0) list[i] = out; else list.push(out);
+  closeForm();
+  render();
+}
+
+// ------------------------------------------------------------------ actions
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b || b.disabled) return;
+  const i = +b.dataset.i;
+  if (b.dataset.add) openForm(b.dataset.add, -1);
+  else if (b.dataset.edit) openForm(b.dataset.edit, i);
+  else if (b.dataset.hide) { const x = X[b.dataset.hide][i]; if (x.hidden) delete x.hidden; else x.hidden = true; render(); }
+  else if (b.dataset.del) { X[b.dataset.del].splice(i, 1); if (editing) closeForm(); render(); }
+  else if (b.dataset.move) {
+    const j = i + +b.dataset.move;
+    [X.steps[i], X.steps[j]] = [X.steps[j], X.steps[i]];
+    render();
+  }
+});
+document.addEventListener("change", (e) => {
+  const el = e.target;
+  if (!el.dataset.time) return;
+  const t = X.timing[el.dataset.time] || (X.timing[el.dataset.time] = {});
+  if (el.value === "") delete t[el.dataset.k]; else t[el.dataset.k] = Number(el.value);
+  markDirty();
+});
+
+async function post(body) {
+  const r = await fetch("/api/plan", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pin: getPin(), ...body }),
+  });
+  let res = {};
+  try { res = await r.json(); } catch { /* empty */ }
+  if (!r.ok || !res.ok) throw new Error(res.error || "HTTP " + r.status);
+}
+
+$("#save").onclick = async () => {
+  $("#save").disabled = true;
+  try {
+    await post({ extra: X });
+    await loadAll();
+    say("บันทึกแผนแล้ว — หน้าจอคอมและมือถือใช้แผนใหม่ทันที", true);
+  } catch (e) { say("บันทึกไม่ได้: " + e.message, false); }
+  finally { $("#save").disabled = !idle; }
+};
+
+let resetArmed = null;
+$("#reset").onclick = async () => {
+  if (!resetArmed) {  // second click within 4 s confirms
+    $("#reset").textContent = "กดอีกครั้งเพื่อยืนยัน";
+    $("#reset").classList.replace("btn-ghost", "btn-warn");
+    resetArmed = setTimeout(disarm, 4000);
+    return;
+  }
+  disarm();
+  try {
+    await post({ reset: true });
+    await loadAll();
+    say("กลับไปใช้แผน PDF แล้ว — ไฟล์แผนเดิมย้ายไปเป็น plan-extra_old_… ข้อมูลที่เก็บแล้วอยู่ครบ", true);
+  } catch (e) { say("รีเซ็ตไม่ได้: " + e.message, false); }
+};
+function disarm() {
+  clearTimeout(resetArmed); resetArmed = null;
+  $("#reset").textContent = "กลับไปใช้แผน PDF";
+  $("#reset").classList.replace("btn-warn", "btn-ghost");
+}
+
+(async () => {
+  try { await loadAll(); } catch (e) { say("โหลดแผนไม่ได้: " + e.message, false); return; }
+  // another computer changed the plan: take it if nothing is being edited here
+  App.onPlan = () => { if (JSON.stringify(X) === savedJson && !editing) loadAll(); else say("มีการแก้แผนจากที่อื่น — บันทึกตอนนี้จะเขียนทับ", false); };
+  connect("remote", (st) => {
+    const now = st.phase === "idle";
+    if (now !== idle) { idle = now; render(); }
+  });
+})();
+</script>
+</body>
+</html>

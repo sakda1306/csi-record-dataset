@@ -1,7 +1,7 @@
 // Shared by monitor.html and remote.html: config, live stream, commands, timed sounds.
 "use strict";
 
-const App = { cfg: null, status: null, offsets: [], lastMsg: 0 };
+const App = { cfg: null, status: null, offsets: [], lastMsg: 0, planRev: null, onPlan: null };
 
 async function loadConfig() {
   const r = await fetch("/api/config", { cache: "no-store" });
@@ -26,10 +26,22 @@ function connect(view, onStatus, onRows) {
     App.lastMsg = Date.now();
     updateOffset(m.status.server_time);
     App.status = m.status;
+    watchPlan(m.status.plan_rev ?? 0);
     if (m.rows && onRows) onRows(m.rows);
     onStatus(m.status);
   };
   return es;
+}
+
+// The plan was edited (on /plan): fetch the new config, then let the page rebuild.
+let planLoading = false;
+function watchPlan(rev) {
+  if (App.planRev === null) { App.planRev = rev; return; }
+  if (rev === App.planRev || planLoading) return;
+  planLoading = true;
+  loadConfig().then(() => { App.planRev = rev; if (App.onPlan) App.onPlan(); })
+    .catch(() => { /* try again on the next message */ })
+    .finally(() => { planLoading = false; });
 }
 
 function getPin() { try { return localStorage.getItem("csirec.pin") || ""; } catch { return ""; } }
@@ -134,6 +146,41 @@ function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 function activityById(id) { return App.cfg.activities.find((a) => a.id === id); }
+function roomById(id) { return App.cfg.rooms.find((r) => r.id === id); }
+// rooms and steps offered as buttons (extra items can be hidden; their data stays)
+function visibleRooms() { return App.cfg.rooms.filter((r) => !r.hidden); }
+function stepHidden(step) { return step.acts.every((a) => activityById(a)?.hidden); }
+
+// ------------------------------------------------------------------ round plan (room + volunteer)
+// counts of one round: {activity: kept takes}
+function roundCounts(st, room, vol) { return ((st.counts[room] || {})[vol]) || {}; }
+// takes still to do in a plan step; a step counts its activity's takes after the earlier steps
+function stepLeft(step, c) {
+  return step.acts.reduce((s, a) => s + Math.max(0, Math.min(step.per[a], step.cum[a] - (c[a] || 0))), 0);
+}
+function hasBaseline(st, room, vol) { return (st.baselines || []).includes(room + "/" + vol); }
+// {fall: [done, target], normal: [...], all: [...]}: the takes used for the model (train, fall/normal)
+function roundTotals(c) {
+  const out = { fall: [0, 0], normal: [0, 0], all: [0, 0] };
+  for (const a of App.cfg.activities) {
+    if (!a.train || !out[a.label]) continue;
+    const n = Math.min(c[a.id] || 0, a.target);
+    for (const k of [a.label, "all"]) { out[k][0] += n; out[k][1] += a.target; }
+  }
+  return out;
+}
+function stepDesc(step) {
+  const ds = [...new Set(step.acts.map((a) => activityById(a).desc).filter(Boolean))];
+  return ds.join(" / ");
+}
+function stepLabel(step) { return activityById(step.acts[0]).label; }
+// short Thai tag for a step: [css class, text]
+function stepTag(step) {
+  const a = activityById(step.acts[0]);
+  if (!a.train) return ["none", "ไม่ใช้ฝึก"];
+  return [a.label, { fall: "ล้ม", normal: "ปกติ", none: "ห้องว่าง" }[a.label] || a.label];
+}
+const CHECK_SVG = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 function fmt(v, d = 0, unit = "") { return v === null || v === undefined ? "–" : Number(v).toFixed(d) + unit; }
 
 const PHASE_TH = { idle: "พร้อม", countdown: "เตรียมตัว", recording: "กำลังบันทึก", review: "รอตัดสิน", rest: "พัก" };

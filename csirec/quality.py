@@ -34,6 +34,35 @@ def motion_blocks(amp_data: np.ndarray, rate_hz: float) -> np.ndarray:
     return blocks.std(axis=1).mean(axis=1)
 
 
+EARLY_S = 0.5  # movement this long before the cue = started too early
+END_MARGIN_S = 0.5  # movement still going this close to the end = not finished in the take
+SPAN_LEVEL = 0.3  # the movement is where motion is above this share of (peak - still)
+
+
+def action_span(mb: np.ndarray, bt: np.ndarray, still: float, cue_s: float) -> tuple[float, float]:
+    """Estimated start and end (s from the take start) of the movement after the cue.
+
+    Searches from 1 s before the cue, around the strongest motion block after the cue, for the
+    run of blocks above still + SPAN_LEVEL * (peak - still), allowing short dips of up to 0.5 s.
+    """
+    lo = int(np.searchsorted(bt, cue_s - 1.0))
+    peak_i = lo + int(np.argmax(mb[lo:]))
+    thr = still + SPAN_LEVEL * (float(mb[peak_i]) - still)
+    above = mb > thr
+    gap = round(0.5 / MOTION_BLOCK_S)
+    s = peak_i
+    while s - 1 >= lo and any(above[max(lo, s - 1 - gap) : s]):
+        s -= 1
+        while not above[s]:
+            s -= 1
+    e = peak_i
+    while e + 1 < mb.size and any(above[e + 1 : e + 2 + gap]):
+        e += 1
+        while not above[e]:
+            e += 1
+    return round(float(bt[s]), 2), round(float(bt[e] + MOTION_BLOCK_S), 2)
+
+
 def dedupe(frames: Sequence[tuple[float, Frame]], rate_hz: float):
     """Drops retransmissions; returns (kept frames, LinkStats)."""
     st = LinkStats(rate_hz=rate_hz)
@@ -48,11 +77,13 @@ def evaluate(
     expect_motion: bool,
     cfg,
     checksum_errors: int = 0,
+    ends_still: bool = True,
 ) -> dict:
     """Quality of one take. frames are (host time relative to take start, Frame)."""
     kept, st = dedupe(frames, cfg.rate_hz)
     q: dict = {
         "frames": len(kept),
+        "frames_expected": round(cfg.rate_hz * duration_s),
         "duplicates": st.duplicates,
         "air_lost": st.air_lost,
         "air_loss_pct": round(st.air_loss_pct, 2),
@@ -66,7 +97,14 @@ def evaluate(
     warnings: list[str] = []
 
     if len(kept) < 3:
-        q.update(verdict="fail", reasons=["ไม่มีข้อมูลจาก Rx"], warnings=[])
+        q.update(
+            verdict="fail",
+            reasons=["ไม่มีข้อมูลจาก Rx"],
+            warnings=[],
+            motion_ratio=None,
+            action_start_s=None,
+            action_end_s=None,
+        )
         return q
 
     # gaps by host time, including the start and end of the take
@@ -96,6 +134,7 @@ def evaluate(
         warnings.append("Tx รีบูตหรือลำดับเฟรมกระโดดระหว่างบันทึก")
 
     q["motion_ratio"] = None
+    q["action_start_s"] = q["action_end_s"] = None
     if cue_offset_s is not None:
         amp = np.array([amplitudes(f)[DATA_SC] for _, f in kept])
         mb = motion_blocks(amp, cfg.rate_hz)
@@ -108,6 +147,13 @@ def evaluate(
                 q["motion_ratio"] = round(ratio, 2)
                 if expect_motion and ratio < cfg.min_motion_ratio:
                     warnings.append(f"แทบไม่เห็นการเคลื่อนไหวหลังสัญญาณ (x{ratio:.1f}) ทำท่าทันไหม?")
+                elif expect_motion:
+                    span = action_span(mb, bt, float(np.median(before)), cue_offset_s)
+                    q["action_start_s"], q["action_end_s"] = span
+                    if span[0] < cue_offset_s - EARLY_S:
+                        warnings.append(f"เริ่มขยับก่อนสัญญาณ ({span[0]:.1f} s) ยืนนิ่งรอสัญญาณ")
+                    if ends_still and span[1] > duration_s - END_MARGIN_S:
+                        warnings.append("ท่ายังไม่จบตอนหยุดบันทึก (ท่าอาจไม่ครบในช่วงบันทึก)")
 
     q["verdict"] = "fail" if reasons else "pass"
     q["reasons"] = reasons
